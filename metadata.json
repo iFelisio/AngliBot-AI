@@ -1,0 +1,7 @@
+{
+  "name": "Copy of AngliBot AI",
+  "description": "Platformë inteligjente për mësimin e gjuhës Angleze, e krijuar posaçërisht për studentët shqiptarë.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
