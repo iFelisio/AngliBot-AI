@@ -5,7 +5,10 @@ import { Proficiency } from "../types";
 // Always initialize GoogleGenAI with a named parameter using process.env.API_KEY
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const CATEGORIES = ['Animals', 'Travel', 'Food', 'Technology', 'Nature', 'Business', 'Emotions', 'Daily Life', 'Science'];
+const CATEGORIES = [
+  'Animals', 'Travel', 'Food', 'Technology', 'Nature', 'Business', 'Emotions', 
+  'Daily Life', 'Science', 'Sports', 'Music', 'History', 'Space', 'Art', 'Clothing'
+];
 
 export const translateText = async (text: string, fromAlbanian: boolean) => {
   const ai = getAI();
@@ -36,24 +39,32 @@ export const chatWithAI = async (message: string, proficiency: Proficiency = 'Be
 export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'medium') => {
   const ai = getAI();
   const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
+  // Use current time as a seed to force randomness in the LLM
+  const seed = Date.now();
+  
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: `Generate one common English word for a learning game. 
+    contents: `[Seed: ${seed}] Generate one UNIQUE English word for a learning game. 
     Category: ${category}. 
     Difficulty Level: ${difficulty}. 
-    Word length should be between 4 and 8 characters.
-    Return ONLY the word in uppercase. Do not repeat previous common words like 'APPLE'.`,
+    Word length: 4-8 chars.
+    CRITICAL: Do NOT pick common starter words like Apple or Banana. Pick something interesting and educational.
+    Return ONLY the word in uppercase.`,
   });
-  const word = response.text?.trim().toUpperCase().replace(/[^A-Z]/g, '') || "LEARN";
+  const word = response.text?.trim().toUpperCase().replace(/[^A-Z]/g, '') || "STUDY";
   return word;
 };
 
 export const generateWordPair = async () => {
   const ai = getAI();
   const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
+  const seed = Date.now();
+  
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: `Generate 4 pairs of English words and their Albanian translations. Category: ${category}. Return the result in a valid JSON array like: [{"en": "Apple", "sq": "Mollë"}, ...]`,
+    contents: `[Seed: ${seed}] Generate 4 RANDOM pairs of English words and Albanian translations. 
+    Category: ${category}. 
+    Return as JSON array: [{"en": "word", "sq": "fjala"}, ...]`,
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -73,19 +84,17 @@ export const generateWordPair = async () => {
   try {
     return JSON.parse(response.text || "[]");
   } catch (e) {
-    return [{ en: "Sun", sq: "Dielli" }, { en: "Moon", sq: "Hëna" }];
+    return [{ en: "Knowledge", sq: "Dituria" }, { en: "Challenge", sq: "Sfidë" }];
   }
 };
 
 export const generateSentence = async (level: Proficiency = 'Beginner') => {
   const ai = getAI();
-  const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
+  const seed = Date.now();
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: `Generate one interesting English sentence for a ${level} level student to learn. 
-    Category: ${category}. 
-    The sentence should be grammatically correct and appropriate.
-    Return ONLY the sentence text.`,
+    contents: `[Seed: ${seed}] Generate one random English sentence for a ${level} student. 
+    Avoid repeating common phrases. Return ONLY the sentence text.`,
   });
-  return response.text?.trim() || "The sun is shining today.";
+  return response.text?.trim() || "Learning a new language opens many doors.";
 };
