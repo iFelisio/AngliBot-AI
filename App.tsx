@@ -54,7 +54,8 @@ const App: React.FC = () => {
     const savedTheme = localStorage.getItem('app_theme') as ThemeColor;
     if (savedTheme) setTheme(savedTheme);
 
-    const storedUsers = JSON.parse(localStorage.getItem('app_users') || '[]');
+    let storedUsers = [];
+    try { storedUsers = JSON.parse(localStorage.getItem('app_users') || '[]'); } catch (e) {}
     const mergedUsers = [...storedUsers];
     PREDEFINED_ADMINS.forEach(admin => {
       if (!mergedUsers.find(u => u.name.toLowerCase() === admin.name.toLowerCase())) {
@@ -63,18 +64,30 @@ const App: React.FC = () => {
     });
     setAllUsers(mergedUsers);
 
-    const storedDialogues = localStorage.getItem('app_dialogues');
-    setDialogues(storedDialogues ? JSON.parse(storedDialogues) : INITIAL_DIALOGUES);
-    setSuggestions(JSON.parse(localStorage.getItem('app_suggestions') || '[]'));
-    setLoginLogs(JSON.parse(localStorage.getItem('app_login_logs') || '[]'));
+    let parsedDialogues = INITIAL_DIALOGUES;
+    try { 
+      const storedDialogues = localStorage.getItem('app_dialogues');
+      if (storedDialogues) parsedDialogues = JSON.parse(storedDialogues);
+    } catch (e) {}
+    setDialogues(parsedDialogues);
 
-    const persistedUser = localStorage.getItem('current_user');
-    if (persistedUser) {
-      const user = JSON.parse(persistedUser);
-      const latest = mergedUsers.find((u: User) => u.id === user.id);
-      if (latest) setCurrentUser(latest);
-      else setCurrentUser(user);
-    }
+    let parsedSuggestions = [];
+    try { parsedSuggestions = JSON.parse(localStorage.getItem('app_suggestions') || '[]'); } catch (e) {}
+    setSuggestions(parsedSuggestions);
+
+    let parsedLoginLogs = [];
+    try { parsedLoginLogs = JSON.parse(localStorage.getItem('app_login_logs') || '[]'); } catch (e) {}
+    setLoginLogs(parsedLoginLogs);
+
+    try {
+      const persistedUser = localStorage.getItem('current_user');
+      if (persistedUser) {
+        const user = JSON.parse(persistedUser);
+        const latest = mergedUsers.find((u: User) => u.id === user.id);
+        if (latest) setCurrentUser(latest);
+        else setCurrentUser(user);
+      }
+    } catch (e) {}
   }, []);
 
   // Persistence: Save on every state change
