@@ -22,6 +22,7 @@ export interface Dialogue {
   title: string;
   content: string;
   audioData?: string; // Base64 audio string
+  videoData?: string; // Base64 video string
   addedBy: string;
   level: Proficiency;
 }

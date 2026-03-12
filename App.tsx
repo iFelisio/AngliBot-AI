@@ -92,12 +92,16 @@ const App: React.FC = () => {
 
   // Persistence: Save on every state change
   useEffect(() => {
-    localStorage.setItem('app_theme', theme);
-    localStorage.setItem('app_users', JSON.stringify(allUsers));
-    localStorage.setItem('app_dialogues', JSON.stringify(dialogues));
-    localStorage.setItem('app_suggestions', JSON.stringify(suggestions));
-    localStorage.setItem('app_login_logs', JSON.stringify(loginLogs));
-    if (currentUser) localStorage.setItem('current_user', JSON.stringify(currentUser));
+    try {
+      localStorage.setItem('app_theme', theme);
+      localStorage.setItem('app_users', JSON.stringify(allUsers));
+      localStorage.setItem('app_dialogues', JSON.stringify(dialogues));
+      localStorage.setItem('app_suggestions', JSON.stringify(suggestions));
+      localStorage.setItem('app_login_logs', JSON.stringify(loginLogs));
+      if (currentUser) localStorage.setItem('current_user', JSON.stringify(currentUser));
+    } catch (e) {
+      console.error("Error saving to localStorage (might be full due to large media files):", e);
+    }
   }, [theme, allUsers, dialogues, suggestions, currentUser, loginLogs]);
 
   const login = (data: { name: string; password?: string }) => {
@@ -324,6 +328,11 @@ const DialoguesView: React.FC<{ dialogues: Dialogue[], level: Proficiency, isDar
           <div className={`w-full max-w-lg p-10 rounded-[3rem] ${isDark ? 'bg-zinc-900' : 'bg-white'}`}>
             <div className="flex justify-between items-start mb-6"><h3 className="text-3xl font-black">{selected.title}</h3><button onClick={() => setSelected(null)} className="text-2xl">&times;</button></div>
             <div className="whitespace-pre-wrap font-serif text-xl italic mb-10">{selected.content}</div>
+            {selected.videoData && (
+              <video controls className="w-full rounded-2xl mb-4 max-h-64 object-cover" src={selected.videoData}>
+                Shfletuesi juaj nuk e mbështet videon.
+              </video>
+            )}
             {selected.audioData && <audio controls className="w-full mb-4" src={selected.audioData} />}
             <button onClick={() => setSelected(null)} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Mbyll</button>
           </div>
@@ -442,7 +451,7 @@ const SuggestionsView: React.FC<{ suggestions: Suggestion[], onAdd: (t: string) 
 
 const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs: LoginEvent[], onDialogueAdd: (d: Dialogue) => void, onMakeAdmin: (id: string, p?: string) => void, onRespondSuggestion: (id: string, msg: string) => void, isDark?: boolean }> = ({ users, suggestions, loginLogs, onDialogueAdd, onMakeAdmin, onRespondSuggestion, isDark }) => {
   const [tab, setTab] = useState('users');
-  const [newD, setNewD] = useState({ title: '', content: '', level: 'Beginner' as Proficiency, audioData: '' });
+  const [newD, setNewD] = useState({ title: '', content: '', level: 'Beginner' as Proficiency, audioData: '', videoData: '' });
   return (
     <div className="space-y-10">
       <div className="flex gap-4 border-b pb-2"><button onClick={() => setTab('users')} className={`font-bold ${tab === 'users' ? 'text-black' : 'text-gray-400'}`}>Studentët</button><button onClick={() => setTab('dialogues')} className={`font-bold ${tab === 'dialogues' ? 'text-black' : 'text-gray-400'}`}>Shto Dialog</button><button onClick={() => setTab('logs')} className={`font-bold ${tab === 'logs' ? 'text-black' : 'text-gray-400'}`}>Logjet</button></div>
@@ -456,10 +465,33 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
         <div className="space-y-4">
           <input className="w-full p-4 border rounded-2xl outline-none" placeholder="Titulli" value={newD.title} onChange={e => setNewD({...newD, title: e.target.value})} />
           <textarea className="w-full h-40 p-4 border rounded-2xl outline-none" placeholder="Teksti i bisedës" value={newD.content} onChange={e => setNewD({...newD, content: e.target.value})} />
-          <input type="file" accept="audio/*" onChange={e => {
-            const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onloadend = () => setNewD({...newD, audioData: r.result as string}); r.readAsDataURL(f); }
-          }} />
-          <button onClick={() => { onDialogueAdd({ id: Date.now().toString(), ...newD, addedBy: 'Admin' }); setNewD({title:'', content:'', level:'Beginner', audioData:''}); alert("U publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Dialogun</button>
+          <div>
+            <label className="block text-xs font-bold mb-1">Audio (Opsionale)</label>
+            <input type="file" accept="audio/*" onChange={e => {
+              const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onloadend = () => setNewD({...newD, audioData: r.result as string}); r.readAsDataURL(f); }
+            }} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar - max 2MB)</label>
+            <input type="file" accept="video/mp4,video/*" onChange={e => {
+              const f = e.target.files?.[0]; 
+              if (f) { 
+                if (f.size > 2 * 1024 * 1024) {
+                  alert("Skedari është shumë i madh për t'u ruajtur në shfletues. Ju lutem përdorni një URL ose një skedar më të vogël se 2MB.");
+                  e.target.value = '';
+                  return;
+                }
+                const r = new FileReader(); 
+                r.onloadend = () => setNewD({...newD, videoData: r.result as string}); 
+                r.readAsDataURL(f); 
+              }
+            }} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Videos (p.sh. https://.../video.mp4)</label>
+            <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newD.videoData.startsWith('http') ? newD.videoData : ''} onChange={e => setNewD({...newD, videoData: e.target.value})} />
+          </div>
+          <button onClick={() => { onDialogueAdd({ id: Date.now().toString(), ...newD, addedBy: 'Admin' }); setNewD({title:'', content:'', level:'Beginner', audioData:'', videoData:''}); alert("U publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Dialogun</button>
         </div>
       )}
       {tab === 'logs' && loginLogs.slice(0, 50).map(l => (
