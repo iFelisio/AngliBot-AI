@@ -16,6 +16,10 @@ const CATEGORIES = [
   'Daily Life', 'Science', 'Sports', 'Music', 'History', 'Space', 'Art', 'Clothing'
 ];
 
+const recentWords: string[] = [];
+const recentPairs: string[] = [];
+const recentSentences: string[] = [];
+
 const withTimeout = <T>(promise: Promise<T>, timeoutMs: number = 8000): Promise<T> => {
   return Promise.race([
     promise,
@@ -63,21 +67,30 @@ export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'med
   try {
     const ai = getAI();
     const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
-    // Use current time as a seed to force randomness in the LLM
-    const seed = Date.now();
     
     const lengthConstraint = exactLength ? `EXACTLY ${exactLength} characters long.` : `4-8 chars.`;
+    const avoidList = recentWords.length > 0 ? `DO NOT use any of these words: ${recentWords.join(', ')}.` : '';
 
     const response = await withTimeout(ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `[Seed: ${seed}] Generate one UNIQUE English word for a learning game. 
+      contents: `Generate one UNIQUE English word for a learning game. 
       Category: ${category}. 
       Difficulty Level: ${difficulty}. 
       Word length: ${lengthConstraint}
+      ${avoidList}
       CRITICAL: Do NOT pick common starter words like Apple or Banana. Pick something interesting and educational.
       Return ONLY the word in uppercase.`,
+      config: {
+        temperature: 1.2,
+      }
     }));
     const word = response.text?.trim().toUpperCase().replace(/[^A-Z]/g, '') || (exactLength === 5 ? "STUDY" : "LEARN");
+    
+    if (word && word.length > 0) {
+      recentWords.push(word);
+      if (recentWords.length > 30) recentWords.shift();
+    }
+    
     return word;
   } catch (error) {
     console.error("Error generating word:", error);
@@ -89,14 +102,16 @@ export const generateWordPair = async () => {
   try {
     const ai = getAI();
     const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
-    const seed = Date.now();
+    const avoidList = recentPairs.length > 0 ? `DO NOT use these English words: ${recentPairs.join(', ')}.` : '';
     
     const response = await withTimeout(ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `[Seed: ${seed}] Generate 4 RANDOM pairs of English words and Albanian translations. 
+      contents: `Generate 4 RANDOM pairs of English words and Albanian translations. 
       Category: ${category}. 
+      ${avoidList}
       Return as JSON array: [{"en": "word", "sq": "fjala"}, ...]`,
       config: {
+        temperature: 1.2,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -113,7 +128,14 @@ export const generateWordPair = async () => {
     }));
     
     try {
-      return JSON.parse(response.text || "[]");
+      const parsed = JSON.parse(response.text || "[]");
+      if (Array.isArray(parsed)) {
+        parsed.forEach(p => {
+          if (p.en) recentPairs.push(p.en);
+        });
+        if (recentPairs.length > 40) recentPairs.splice(0, recentPairs.length - 40);
+      }
+      return parsed;
     } catch (e) {
       return [
         { en: "Knowledge", sq: "Dituria" }, 
@@ -136,13 +158,25 @@ export const generateWordPair = async () => {
 export const generateSentence = async (level: Proficiency = 'Beginner') => {
   try {
     const ai = getAI();
-    const seed = Date.now();
+    const avoidList = recentSentences.length > 0 ? `DO NOT use these exact sentences: ${recentSentences.join(' | ')}.` : '';
+    
     const response = await withTimeout(ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `[Seed: ${seed}] Generate one random English sentence for a ${level} student. 
+      contents: `Generate one random English sentence for a ${level} student. 
+      ${avoidList}
       Avoid repeating common phrases. Return ONLY the sentence text.`,
+      config: {
+        temperature: 1.2,
+      }
     }));
-    return response.text?.trim() || "Learning a new language opens many doors.";
+    const sentence = response.text?.trim() || "Learning a new language opens many doors.";
+    
+    if (sentence) {
+      recentSentences.push(sentence);
+      if (recentSentences.length > 10) recentSentences.shift();
+    }
+    
+    return sentence;
   } catch (error) {
     console.error("Error generating sentence:", error);
     return "Learning a new language opens many doors.";
