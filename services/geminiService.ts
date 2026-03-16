@@ -2,8 +2,14 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Proficiency } from "../types";
 
-// Always initialize GoogleGenAI with a named parameter using process.env.API_KEY
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Always initialize GoogleGenAI with a named parameter using process.env.GEMINI_API_KEY
+const getAI = () => {
+  const key = process.env.GEMINI_API_KEY || process.env.API_KEY || import.meta.env.VITE_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || '';
+  if (!key) {
+    console.error("Mungon çelësi i API-së (API Key). Ju lutem shtoni GEMINI_API_KEY në Netlify.");
+  }
+  return new GoogleGenAI({ apiKey: key });
+};
 
 const CATEGORIES = [
   'Animals', 'Travel', 'Food', 'Technology', 'Nature', 'Business', 'Emotions', 
