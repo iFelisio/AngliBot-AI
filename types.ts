@@ -42,3 +42,10 @@ export interface LoginEvent {
   userName: string;
   timestamp: string;
 }
+
+export interface AnimationMedia {
+  id: string;
+  title: string;
+  videoData: string;
+  addedBy: string;
+}

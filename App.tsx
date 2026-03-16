@@ -45,6 +45,7 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [dialogues, setDialogues] = useState<Dialogue[]>([]);
+  const [animations, setAnimations] = useState<AnimationMedia[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [loginLogs, setLoginLogs] = useState<LoginEvent[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -71,6 +72,10 @@ const App: React.FC = () => {
     } catch (e) {}
     setDialogues(parsedDialogues);
 
+    let parsedAnimations = [];
+    try { parsedAnimations = JSON.parse(localStorage.getItem('app_animations') || '[]'); } catch (e) {}
+    setAnimations(parsedAnimations);
+
     let parsedSuggestions = [];
     try { parsedSuggestions = JSON.parse(localStorage.getItem('app_suggestions') || '[]'); } catch (e) {}
     setSuggestions(parsedSuggestions);
@@ -96,13 +101,14 @@ const App: React.FC = () => {
       localStorage.setItem('app_theme', theme);
       localStorage.setItem('app_users', JSON.stringify(allUsers));
       localStorage.setItem('app_dialogues', JSON.stringify(dialogues));
+      localStorage.setItem('app_animations', JSON.stringify(animations));
       localStorage.setItem('app_suggestions', JSON.stringify(suggestions));
       localStorage.setItem('app_login_logs', JSON.stringify(loginLogs));
       if (currentUser) localStorage.setItem('current_user', JSON.stringify(currentUser));
     } catch (e) {
       console.error("Error saving to localStorage (might be full due to large media files):", e);
     }
-  }, [theme, allUsers, dialogues, suggestions, currentUser, loginLogs]);
+  }, [theme, allUsers, dialogues, animations, suggestions, currentUser, loginLogs]);
 
   const login = (data: { name: string; password?: string }) => {
     const user = allUsers.find(u => u.name.toLowerCase() === data.name.toLowerCase());
@@ -168,6 +174,7 @@ const App: React.FC = () => {
         <div className="text-[10px] uppercase font-bold px-3 mb-2 tracking-wider text-gray-400">Shërbimet</div>
         <NavLink to="/" icon="language" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Përkthim</NavLink>
         <NavLink to="/dialogues" icon="book-open" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Dialogje</NavLink>
+        <NavLink to="/childrens-corner" icon="child" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Këndi i Fëmijëve</NavLink>
         <NavLink to="/games" icon="gamepad" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Lojëra</NavLink>
         <NavLink to="/chat" icon="message" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>AngliBot AI</NavLink>
         <div className="text-[10px] uppercase font-bold px-3 mt-6 mb-2 tracking-wider text-gray-400">Statistikat</div>
@@ -219,7 +226,8 @@ const App: React.FC = () => {
                 <Route path="/streak" element={<StreakView user={currentUser} isDark={isDarkTheme} />} />
                 <Route path="/suggestions" element={<SuggestionsView suggestions={suggestions} onAdd={text => setSuggestions([...suggestions, { id: Date.now().toString(), userId: currentUser.id, userName: currentUser.name, text, date: new Date().toLocaleDateString() }])} isDark={isDarkTheme} />} />
                 <Route path="/settings" element={<SettingsView currentTheme={theme} onThemeChange={setTheme} isDark={isDarkTheme} />} />
-                {currentUser.isAdmin && <Route path="/admin" element={<AdminView users={allUsers} suggestions={suggestions} loginLogs={loginLogs} onDialogueAdd={d => setDialogues([...dialogues, d])} onMakeAdmin={handleMakeAdmin} onRespondSuggestion={(id, msg) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, adminResponse: msg } : s))} isDark={isDarkTheme} />} />}
+                {currentUser.isAdmin && <Route path="/admin" element={<AdminView users={allUsers} suggestions={suggestions} loginLogs={loginLogs} dialogues={dialogues} animations={animations} onDialogueAdd={d => setDialogues([...dialogues, d])} onDialogueRemove={id => setDialogues(dialogues.filter(d => d.id !== id))} onAnimationAdd={a => setAnimations([...animations, a])} onAnimationRemove={id => setAnimations(animations.filter(a => a.id !== id))} onMakeAdmin={handleMakeAdmin} onRespondSuggestion={(id, msg) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, adminResponse: msg } : s))} isDark={isDarkTheme} />} />}
+                <Route path="/childrens-corner" element={<ChildrensCornerView animations={animations} isDark={isDarkTheme} />} />
               </Routes>
             </div>
           </div>
@@ -310,22 +318,40 @@ const ChatView: React.FC<{ level: Proficiency, isDark?: boolean }> = ({ level, i
 };
 
 const DialoguesView: React.FC<{ dialogues: Dialogue[], level: Proficiency, isDark?: boolean }> = ({ dialogues, level, isDark }) => {
+  const [selectedLevel, setSelectedLevel] = useState<Proficiency | 'All'>('All');
   const [selected, setSelected] = useState<Dialogue | null>(null);
-  const filtered = dialogues.filter(d => d.level === level);
+  const filtered = selectedLevel === 'All' ? dialogues : dialogues.filter(d => d.level === selectedLevel);
+  
   return (
     <div className="space-y-6">
-      <h2 className="text-3xl font-black">Dialogje Praktike</h2>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <h2 className="text-3xl font-black">Dialogje Praktike</h2>
+        <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+          {(['All', 'Beginner', 'Intermediate', 'Advanced'] as const).map(l => (
+            <button key={l} onClick={() => setSelectedLevel(l)} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${selectedLevel === l ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-black'}`}>
+              {l === 'All' ? 'Të gjitha' : l}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="grid gap-4">
-        {filtered.map(d => (
-          <button key={d.id} onClick={() => setSelected(d)} className={`p-6 rounded-3xl border text-left flex justify-between items-center ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white shadow-md'}`}>
-            <span className="font-bold text-lg">{d.title}</span>
-            <i className="fas fa-chevron-right"></i>
-          </button>
-        ))}
+        {filtered.length === 0 ? (
+          <p className="text-gray-500">Nuk ka dialogje për këtë nivel.</p>
+        ) : (
+          filtered.map(d => (
+            <button key={d.id} onClick={() => setSelected(d)} className={`p-6 rounded-3xl border text-left flex justify-between items-center ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white shadow-md'}`}>
+              <div>
+                <span className="font-bold text-lg block">{d.title}</span>
+                <span className="text-xs text-gray-500">{d.level}</span>
+              </div>
+              <i className="fas fa-chevron-right"></i>
+            </button>
+          ))
+        )}
       </div>
       {selected && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
-          <div className={`w-full max-w-lg p-10 rounded-[3rem] ${isDark ? 'bg-zinc-900' : 'bg-white'}`}>
+          <div className={`w-full max-w-lg p-10 rounded-[3rem] max-h-[90vh] overflow-y-auto ${isDark ? 'bg-zinc-900' : 'bg-white'}`}>
             <div className="flex justify-between items-start mb-6"><h3 className="text-3xl font-black">{selected.title}</h3><button onClick={() => setSelected(null)} className="text-2xl">&times;</button></div>
             <div className="whitespace-pre-wrap font-serif text-xl italic mb-10">{selected.content}</div>
             {selected.videoData && (
@@ -449,12 +475,62 @@ const SuggestionsView: React.FC<{ suggestions: Suggestion[], onAdd: (t: string) 
   );
 };
 
-const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs: LoginEvent[], onDialogueAdd: (d: Dialogue) => void, onMakeAdmin: (id: string, p?: string) => void, onRespondSuggestion: (id: string, msg: string) => void, isDark?: boolean }> = ({ users, suggestions, loginLogs, onDialogueAdd, onMakeAdmin, onRespondSuggestion, isDark }) => {
+const ChildrensCornerView: React.FC<{ animations: AnimationMedia[], isDark?: boolean }> = ({ animations, isDark }) => {
+  const [selected, setSelected] = useState<AnimationMedia | null>(null);
+  return (
+    <div className="space-y-6">
+      <h2 className="text-3xl font-black">Këndi i Fëmijëve</h2>
+      {animations.length === 0 ? (
+        <p className="text-gray-500">Nuk ka ende animacione.</p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {animations.map(a => (
+            <button key={a.id} onClick={() => setSelected(a)} className={`p-6 rounded-3xl border text-left flex flex-col justify-between items-start ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white shadow-md'}`}>
+              <span className="font-bold text-lg mb-4">{a.title}</span>
+              <div className="w-full h-40 bg-gray-200 rounded-xl flex items-center justify-center overflow-hidden relative">
+                {a.videoData ? (
+                  <>
+                    <video src={a.videoData} className="w-full h-full object-cover opacity-60" />
+                    <i className="fas fa-play-circle text-5xl text-white absolute drop-shadow-md"></i>
+                  </>
+                ) : (
+                  <i className="fas fa-film text-4xl text-gray-400"></i>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      {selected && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className={`w-full max-w-3xl p-6 rounded-[2rem] ${isDark ? 'bg-zinc-900' : 'bg-white'}`}>
+            <div className="flex justify-between items-start mb-4">
+              <h3 className="text-2xl font-black">{selected.title}</h3>
+              <button onClick={() => setSelected(null)} className="text-2xl">&times;</button>
+            </div>
+            <video controls autoPlay className="w-full rounded-xl mb-4 max-h-[60vh] bg-black" src={selected.videoData}>
+              Shfletuesi juaj nuk e mbështet videon.
+            </video>
+            <button onClick={() => setSelected(null)} className="w-full py-3 bg-black text-white rounded-xl font-bold">Mbyll</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs: LoginEvent[], dialogues: Dialogue[], animations: AnimationMedia[], onDialogueAdd: (d: Dialogue) => void, onDialogueRemove: (id: string) => void, onAnimationAdd: (a: AnimationMedia) => void, onAnimationRemove: (id: string) => void, onMakeAdmin: (id: string, p?: string) => void, onRespondSuggestion: (id: string, msg: string) => void, isDark?: boolean }> = ({ users, suggestions, loginLogs, dialogues, animations, onDialogueAdd, onDialogueRemove, onAnimationAdd, onAnimationRemove, onMakeAdmin, onRespondSuggestion, isDark }) => {
   const [tab, setTab] = useState('users');
   const [newD, setNewD] = useState({ title: '', content: '', level: 'Beginner' as Proficiency, audioData: '', videoData: '' });
+  const [newAnim, setNewAnim] = useState({ title: '', videoData: '' });
   return (
     <div className="space-y-10">
-      <div className="flex gap-4 border-b pb-2"><button onClick={() => setTab('users')} className={`font-bold ${tab === 'users' ? 'text-black' : 'text-gray-400'}`}>Studentët</button><button onClick={() => setTab('dialogues')} className={`font-bold ${tab === 'dialogues' ? 'text-black' : 'text-gray-400'}`}>Shto Dialog</button><button onClick={() => setTab('logs')} className={`font-bold ${tab === 'logs' ? 'text-black' : 'text-gray-400'}`}>Logjet</button></div>
+      <div className="flex flex-wrap gap-4 border-b pb-2">
+        <button onClick={() => setTab('users')} className={`font-bold ${tab === 'users' ? 'text-black' : 'text-gray-400'}`}>Studentët</button>
+        <button onClick={() => setTab('dialogues')} className={`font-bold ${tab === 'dialogues' ? 'text-black' : 'text-gray-400'}`}>Dialogjet</button>
+        <button onClick={() => setTab('animations')} className={`font-bold ${tab === 'animations' ? 'text-black' : 'text-gray-400'}`}>Animacionet</button>
+        <button onClick={() => setTab('logs')} className={`font-bold ${tab === 'logs' ? 'text-black' : 'text-gray-400'}`}>Logjet</button>
+      </div>
       {tab === 'users' && users.map(u => (
         <div key={u.id} className="flex justify-between items-center p-4 border rounded-2xl mb-2">
           <div><p className="font-bold">{u.name}</p><p className="text-xs text-gray-400">{u.isAdmin ? "Administrator" : "Student"}</p></div>
@@ -462,36 +538,91 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
         </div>
       ))}
       {tab === 'dialogues' && (
-        <div className="space-y-4">
-          <input className="w-full p-4 border rounded-2xl outline-none" placeholder="Titulli" value={newD.title} onChange={e => setNewD({...newD, title: e.target.value})} />
-          <textarea className="w-full h-40 p-4 border rounded-2xl outline-none" placeholder="Teksti i bisedës" value={newD.content} onChange={e => setNewD({...newD, content: e.target.value})} />
-          <div>
-            <label className="block text-xs font-bold mb-1">Audio (Opsionale)</label>
-            <input type="file" accept="audio/*" onChange={e => {
-              const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onloadend = () => setNewD({...newD, audioData: r.result as string}); r.readAsDataURL(f); }
-            }} />
-          </div>
-          <div>
-            <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar - max 2MB)</label>
-            <input type="file" accept="video/mp4,video/*" onChange={e => {
-              const f = e.target.files?.[0]; 
-              if (f) { 
-                if (f.size > 2 * 1024 * 1024) {
-                  alert("Skedari është shumë i madh për t'u ruajtur në shfletues. Ju lutem përdorni një URL ose një skedar më të vogël se 2MB.");
-                  e.target.value = '';
-                  return;
+        <div className="space-y-6">
+          <div className="space-y-4 border-b pb-6">
+            <h3 className="font-bold text-lg">Shto Dialog të Ri</h3>
+            <input className="w-full p-4 border rounded-2xl outline-none" placeholder="Titulli" value={newD.title} onChange={e => setNewD({...newD, title: e.target.value})} />
+            <select className="w-full p-4 border rounded-2xl outline-none" value={newD.level} onChange={e => setNewD({...newD, level: e.target.value as Proficiency})}>
+              <option value="Beginner">Beginner</option>
+              <option value="Intermediate">Intermediate</option>
+              <option value="Advanced">Advanced</option>
+            </select>
+            <textarea className="w-full h-40 p-4 border rounded-2xl outline-none" placeholder="Teksti i bisedës" value={newD.content} onChange={e => setNewD({...newD, content: e.target.value})} />
+            <div>
+              <label className="block text-xs font-bold mb-1">Audio (Opsionale)</label>
+              <input type="file" accept="audio/*" onChange={e => {
+                const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onloadend = () => setNewD({...newD, audioData: r.result as string}); r.readAsDataURL(f); }
+              }} />
+            </div>
+            <div>
+              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar - max 2MB)</label>
+              <input type="file" accept="video/mp4,video/*" onChange={e => {
+                const f = e.target.files?.[0]; 
+                if (f) { 
+                  if (f.size > 2 * 1024 * 1024) {
+                    alert("Skedari është shumë i madh për t'u ruajtur në shfletues. Ju lutem përdorni një URL ose një skedar më të vogël se 2MB.");
+                    e.target.value = '';
+                    return;
+                  }
+                  const r = new FileReader(); 
+                  r.onloadend = () => setNewD({...newD, videoData: r.result as string}); 
+                  r.readAsDataURL(f); 
                 }
-                const r = new FileReader(); 
-                r.onloadend = () => setNewD({...newD, videoData: r.result as string}); 
-                r.readAsDataURL(f); 
-              }
-            }} />
+              }} />
+            </div>
+            <div>
+              <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Videos (p.sh. https://.../video.mp4)</label>
+              <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newD.videoData.startsWith('http') ? newD.videoData : ''} onChange={e => setNewD({...newD, videoData: e.target.value})} />
+            </div>
+            <button onClick={() => { onDialogueAdd({ id: Date.now().toString(), ...newD, addedBy: 'Admin' }); setNewD({title:'', content:'', level:'Beginner', audioData:'', videoData:''}); alert("U publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Dialogun</button>
           </div>
           <div>
-            <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Videos (p.sh. https://.../video.mp4)</label>
-            <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newD.videoData.startsWith('http') ? newD.videoData : ''} onChange={e => setNewD({...newD, videoData: e.target.value})} />
+            <h3 className="font-bold text-lg mb-4">Dialogjet Ekzistuese</h3>
+            {dialogues.map(d => (
+              <div key={d.id} className="flex justify-between items-center p-4 border rounded-2xl mb-2">
+                <div><p className="font-bold">{d.title}</p><p className="text-xs text-gray-400">{d.level}</p></div>
+                <button onClick={() => { if(window.confirm('Jeni i sigurt që doni ta fshini?')) onDialogueRemove(d.id); }} className="bg-red-500 text-white px-4 py-2 rounded-xl text-xs font-bold">Fshi</button>
+              </div>
+            ))}
           </div>
-          <button onClick={() => { onDialogueAdd({ id: Date.now().toString(), ...newD, addedBy: 'Admin' }); setNewD({title:'', content:'', level:'Beginner', audioData:'', videoData:''}); alert("U publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Dialogun</button>
+        </div>
+      )}
+      {tab === 'animations' && (
+        <div className="space-y-6">
+          <div className="space-y-4 border-b pb-6">
+            <h3 className="font-bold text-lg">Shto Animacion të Ri</h3>
+            <input className="w-full p-4 border rounded-2xl outline-none" placeholder="Titulli i Animacionit" value={newAnim.title} onChange={e => setNewAnim({...newAnim, title: e.target.value})} />
+            <div>
+              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar - max 2MB)</label>
+              <input type="file" accept="video/mp4,video/*" onChange={e => {
+                const f = e.target.files?.[0]; 
+                if (f) { 
+                  if (f.size > 2 * 1024 * 1024) {
+                    alert("Skedari është shumë i madh për t'u ruajtur në shfletues. Ju lutem përdorni një URL ose një skedar më të vogël se 2MB.");
+                    e.target.value = '';
+                    return;
+                  }
+                  const r = new FileReader(); 
+                  r.onloadend = () => setNewAnim({...newAnim, videoData: r.result as string}); 
+                  r.readAsDataURL(f); 
+                }
+              }} />
+            </div>
+            <div>
+              <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Videos</label>
+              <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newAnim.videoData.startsWith('http') ? newAnim.videoData : ''} onChange={e => setNewAnim({...newAnim, videoData: e.target.value})} />
+            </div>
+            <button onClick={() => { onAnimationAdd({ id: Date.now().toString(), ...newAnim, addedBy: 'Admin' }); setNewAnim({title:'', videoData:''}); alert("Animacioni u publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Animacionin</button>
+          </div>
+          <div>
+            <h3 className="font-bold text-lg mb-4">Animacionet Ekzistuese</h3>
+            {animations.map(a => (
+              <div key={a.id} className="flex justify-between items-center p-4 border rounded-2xl mb-2">
+                <p className="font-bold">{a.title}</p>
+                <button onClick={() => { if(window.confirm('Jeni i sigurt që doni ta fshini?')) onAnimationRemove(a.id); }} className="bg-red-500 text-white px-4 py-2 rounded-xl text-xs font-bold">Fshi</button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {tab === 'logs' && loginLogs.slice(0, 50).map(l => (
