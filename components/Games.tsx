@@ -16,14 +16,20 @@ export const Wordle: React.FC<GameProps> = ({ onWin }) => {
 
   const initGame = async () => {
     setStatus('loading');
-    let word = "";
-    while (word.length !== 5) {
-      word = await generateWord('easy');
+    try {
+      let word = "";
+      let attempts = 0;
+      while (word.length !== 5 && attempts < 5) {
+        word = await generateWord('easy', 5);
+        attempts++;
+      }
+      if (word.length !== 5) word = "STUDY";
+      setTarget(word);
+      setGuesses([]);
+      setGuess('');
+    } finally {
+      setStatus('playing');
     }
-    setTarget(word);
-    setGuesses([]);
-    setGuess('');
-    setStatus('playing');
   };
 
   useEffect(() => { initGame(); }, []);
@@ -118,11 +124,14 @@ export const Hangman: React.FC<GameProps> = ({ onWin }) => {
 
   const initGame = async () => {
     setStatus('loading');
-    const w = await generateWord('medium');
-    setWord(w);
-    setGuessed([]);
-    setMistakes(0);
-    setStatus('playing');
+    try {
+      const w = await generateWord('medium');
+      setWord(w);
+      setGuessed([]);
+      setMistakes(0);
+    } finally {
+      setStatus('playing');
+    }
   };
 
   useEffect(() => { initGame(); }, []);
@@ -200,11 +209,14 @@ export const WordScramble: React.FC<GameProps> = ({ onWin }) => {
 
   const initGame = async () => {
     setStatus('loading');
-    const word = await generateWord('medium');
-    setOriginal(word);
-    setScrambled(word.split('').sort(() => Math.random() - 0.5).join(''));
-    setAnswer('');
-    setStatus('playing');
+    try {
+      const word = await generateWord('medium');
+      setOriginal(word);
+      setScrambled(word.split('').sort(() => Math.random() - 0.5).join(''));
+      setAnswer('');
+    } finally {
+      setStatus('playing');
+    }
   };
 
   useEffect(() => { initGame(); }, []);
@@ -263,14 +275,17 @@ export const MemoryMatch: React.FC<GameProps> = ({ onWin }) => {
 
   const initGame = async () => {
     setStatus('loading');
-    const pairs = await generateWordPair();
-    const gameCards = pairs.flatMap((p: any, i: number) => [
-      { id: i * 2, text: p.en, pairId: i, isFlipped: false, isMatched: false },
-      { id: i * 2 + 1, text: p.sq, pairId: i, isFlipped: false, isMatched: false }
-    ]).sort(() => Math.random() - 0.5);
-    setCards(gameCards);
-    setFlipped([]);
-    setStatus('playing');
+    try {
+      const pairs = await generateWordPair();
+      const gameCards = pairs.flatMap((p: any, i: number) => [
+        { id: i * 2, text: p.en, pairId: i, isFlipped: false, isMatched: false },
+        { id: i * 2 + 1, text: p.sq, pairId: i, isFlipped: false, isMatched: false }
+      ]).sort(() => Math.random() - 0.5);
+      setCards(gameCards);
+      setFlipped([]);
+    } finally {
+      setStatus('playing');
+    }
   };
 
   useEffect(() => { initGame(); }, []);
@@ -346,12 +361,15 @@ export const SentenceBuilder: React.FC<GameProps> = ({ onWin, level }) => {
 
   const initGame = async () => {
     setStatus('loading');
-    const s = await generateSentence(level);
-    setSentence(s);
-    const split = s.replace(/[.,!?]/g, '').split(' ');
-    setWords([...split].sort(() => Math.random() - 0.5));
-    setSelection([]);
-    setStatus('playing');
+    try {
+      const s = await generateSentence(level);
+      setSentence(s);
+      const split = s.replace(/[.,!?]/g, '').split(' ');
+      setWords([...split].sort(() => Math.random() - 0.5));
+      setSelection([]);
+    } finally {
+      setStatus('playing');
+    }
   };
 
   useEffect(() => { initGame(); }, []);

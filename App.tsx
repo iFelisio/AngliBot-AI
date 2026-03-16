@@ -278,10 +278,13 @@ const PerkthimView: React.FC<{ onTranslate: () => void, isDark?: boolean }> = ({
   const handleTranslate = async () => {
     if (!text.trim()) return;
     setLoading(true);
-    const res = await translateText(text, true);
-    setResult(res);
-    onTranslate();
-    setLoading(false);
+    try {
+      const res = await translateText(text, true);
+      setResult(res);
+      onTranslate();
+    } finally {
+      setLoading(false);
+    }
   };
   return (
     <div className="space-y-8 max-w-2xl mx-auto">
@@ -302,7 +305,13 @@ const ChatView: React.FC<{ level: Proficiency, isDark?: boolean }> = ({ level, i
   const send = async () => {
     if (!input.trim()) return;
     const m = input; setInput(''); setMessages(p => [...p, { role: 'user', text: m }]);
-    setLoading(true); const r = await chatWithAI(m, level); setMessages(p => [...p, { role: 'model', text: r }]); setLoading(false);
+    setLoading(true); 
+    try {
+      const r = await chatWithAI(m, level); 
+      setMessages(p => [...p, { role: 'model', text: r }]); 
+    } finally {
+      setLoading(false);
+    }
   };
   return (
     <div className="flex flex-col h-[calc(100vh-10rem)]">
