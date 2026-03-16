@@ -7,6 +7,7 @@ export type AuthProvider = 'email' | 'admin';
 export interface User {
   id: string;
   name: string;
+  email?: string;
   isAdmin: boolean;
   streak: number;
   lastLogin: string;

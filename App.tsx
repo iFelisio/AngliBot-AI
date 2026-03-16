@@ -4,6 +4,8 @@ import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { ThemeColor, User, Dialogue, Suggestion, Proficiency, Goal, LoginEvent } from './types';
 import { translateText, chatWithAI } from './services/geminiService';
 import { Wordle, Hangman, SentenceBuilder, WordScramble, MemoryMatch } from './components/Games';
+import { loginWithGoogle, db, auth, handleFirestoreError, OperationType } from './firebase';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, getDoc, getDocFromServer } from 'firebase/firestore';
 
 // Custom Logo Component
 const AngliBotLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" }) => (
@@ -20,10 +22,6 @@ const AngliBotLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" 
 
 const INITIAL_DIALOGUES: Dialogue[] = [
   { id: '1', title: 'Daily Greetings', content: 'A: Hello! How are you?\nB: I am fine, thank you.', addedBy: 'Admin', level: 'Beginner' },
-];
-
-const PREDEFINED_ADMINS: User[] = [
-  { id: 'admin-main', name: 'Admin', isAdmin: true, password: '123admin', streak: 1, lastLogin: new Date().toISOString(), points: 0, badges: [] },
 ];
 
 const NavLink: React.FC<{ to: string; icon: string; children: React.ReactNode; highlight?: boolean; onClick?: () => void; isDark?: boolean }> = ({ to, icon, children, highlight, onClick, isDark }) => {
@@ -55,27 +53,6 @@ const App: React.FC = () => {
     const savedTheme = localStorage.getItem('app_theme') as ThemeColor;
     if (savedTheme) setTheme(savedTheme);
 
-    let storedUsers = [];
-    try { storedUsers = JSON.parse(localStorage.getItem('app_users') || '[]'); } catch (e) {}
-    const mergedUsers = [...storedUsers];
-    PREDEFINED_ADMINS.forEach(admin => {
-      if (!mergedUsers.find(u => u.name.toLowerCase() === admin.name.toLowerCase())) {
-        mergedUsers.push(admin);
-      }
-    });
-    setAllUsers(mergedUsers);
-
-    let parsedDialogues = INITIAL_DIALOGUES;
-    try { 
-      const storedDialogues = localStorage.getItem('app_dialogues');
-      if (storedDialogues) parsedDialogues = JSON.parse(storedDialogues);
-    } catch (e) {}
-    setDialogues(parsedDialogues);
-
-    let parsedAnimations = [];
-    try { parsedAnimations = JSON.parse(localStorage.getItem('app_animations') || '[]'); } catch (e) {}
-    setAnimations(parsedAnimations);
-
     let parsedSuggestions = [];
     try { parsedSuggestions = JSON.parse(localStorage.getItem('app_suggestions') || '[]'); } catch (e) {}
     setSuggestions(parsedSuggestions);
@@ -88,69 +65,132 @@ const App: React.FC = () => {
       const persistedUser = localStorage.getItem('current_user');
       if (persistedUser) {
         const user = JSON.parse(persistedUser);
-        const latest = mergedUsers.find((u: User) => u.id === user.id);
-        if (latest) setCurrentUser(latest);
-        else setCurrentUser(user);
+        setCurrentUser(user);
       }
     } catch (e) {}
+
+    // Test Firestore connection
+    const testConnection = async () => {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration.");
+        }
+      }
+    };
+    testConnection();
+
+    // Firebase Listeners
+    const unsubscribeDialogues = onSnapshot(collection(db, 'dialogues'), (snapshot) => {
+      const fetchedDialogues = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Dialogue));
+      setDialogues(fetchedDialogues.length > 0 ? fetchedDialogues : INITIAL_DIALOGUES);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'dialogues');
+    });
+
+    const unsubscribeAnimations = onSnapshot(collection(db, 'animations'), (snapshot) => {
+      const fetchedAnimations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AnimationMedia));
+      setAnimations(fetchedAnimations);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'animations');
+    });
+
+    const unsubscribeUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+      const fetchedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+      setAllUsers(fetchedUsers);
+      
+      // Update currentUser if it exists in the fetched users
+      setCurrentUser(prev => {
+        if (!prev) return prev;
+        const updated = fetchedUsers.find(u => u.id === prev.id);
+        return updated ? updated : prev;
+      });
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'users');
+    });
+
+    return () => {
+      unsubscribeDialogues();
+      unsubscribeAnimations();
+      unsubscribeUsers();
+    };
   }, []);
 
   // Persistence: Save on every state change
   useEffect(() => {
     try {
       localStorage.setItem('app_theme', theme);
-      localStorage.setItem('app_users', JSON.stringify(allUsers));
-      localStorage.setItem('app_dialogues', JSON.stringify(dialogues));
-      localStorage.setItem('app_animations', JSON.stringify(animations));
       localStorage.setItem('app_suggestions', JSON.stringify(suggestions));
       localStorage.setItem('app_login_logs', JSON.stringify(loginLogs));
       if (currentUser) localStorage.setItem('current_user', JSON.stringify(currentUser));
     } catch (e) {
       console.error("Error saving to localStorage (might be full due to large media files):", e);
     }
-  }, [theme, allUsers, dialogues, animations, suggestions, currentUser, loginLogs]);
+  }, [theme, suggestions, currentUser, loginLogs]);
 
-  const login = (data: { name: string; password?: string }) => {
-    const user = allUsers.find(u => u.name.toLowerCase() === data.name.toLowerCase());
-    if (!user) {
-      const newUser: User = { id: Date.now().toString(), name: data.name, password: data.password || 'student123', isAdmin: false, streak: 1, lastLogin: new Date().toISOString(), points: 0, badges: [] };
-      setAllUsers(prev => [...prev, newUser]);
-      setCurrentUser(newUser);
-      setLoginLogs(prev => [{ id: Date.now().toString(), userId: newUser.id, userName: newUser.name, timestamp: newUser.lastLogin }, ...prev]);
-      return;
+  const login = async (data: { id: string; name: string; email: string }) => {
+    try {
+      const userRef = doc(db, 'users', data.id);
+      const userSnap = await getDoc(userRef);
+      
+      let updatedUser: User;
+      const today = new Date().toDateString();
+
+      if (!userSnap.exists()) {
+        const isAdmin = data.email === 'pajtim1.2.bollobani@gmail.com';
+        updatedUser = { 
+          id: data.id, 
+          name: data.name, 
+          email: data.email,
+          isAdmin: isAdmin, 
+          streak: 1, 
+          lastLogin: new Date().toISOString(), 
+          points: 0, 
+          badges: [] 
+        };
+      } else {
+        const user = userSnap.data() as User;
+        updatedUser = { ...user, lastLogin: new Date().toISOString() };
+        const lastLoginDate = new Date(user.lastLogin);
+        const diffDays = Math.ceil(Math.abs(new Date().getTime() - lastLoginDate.getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (today !== lastLoginDate.toDateString()) {
+          if (diffDays === 1) updatedUser.streak += 1;
+          else if (diffDays > 1) updatedUser.streak = 1;
+        }
+      }
+
+      await setDoc(userRef, updatedUser);
+      setCurrentUser(updatedUser);
+      setLoginLogs(prev => [{ id: Date.now().toString(), userId: updatedUser.id, userName: updatedUser.name, timestamp: updatedUser.lastLogin }, ...prev]);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'users');
     }
-    if (user.password && user.password !== data.password) { alert("Fjalëkalim i pasaktë."); return; }
-
-    const today = new Date().toDateString();
-    const updatedUser = { ...user, lastLogin: new Date().toISOString() };
-    const lastLoginDate = new Date(user.lastLogin);
-    const diffDays = Math.ceil(Math.abs(new Date().getTime() - lastLoginDate.getTime()) / (1000 * 60 * 60 * 24));
-    
-    if (today !== lastLoginDate.toDateString()) {
-      if (diffDays === 1) updatedUser.streak += 1;
-      else if (diffDays > 1) updatedUser.streak = 1;
-    }
-
-    setAllUsers(allUsers.map(u => u.id === user.id ? updatedUser : u));
-    setCurrentUser(updatedUser);
-    setLoginLogs(prev => [{ id: Date.now().toString(), userId: updatedUser.id, userName: updatedUser.name, timestamp: updatedUser.lastLogin }, ...prev]);
   };
 
-  const handleMakeAdmin = (userId: string, newPassword?: string) => {
-    const updated = allUsers.map(u => u.id === userId ? { ...u, isAdmin: true, password: newPassword || u.password || 'admin123' } : u);
-    setAllUsers(updated);
-    if (currentUser && currentUser.id === userId) {
-      const me = updated.find(u => u.id === userId);
-      if (me) setCurrentUser(me);
+  const handleMakeAdmin = async (userId: string) => {
+    try {
+      const userRef = doc(db, 'users', userId);
+      await setDoc(userRef, { isAdmin: true }, { merge: true });
+      if (currentUser && currentUser.id === userId) {
+        setCurrentUser({ ...currentUser, isAdmin: true });
+      }
+      alert("Përdoruesi tani është Administrator!");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'users');
     }
-    alert("Përdoruesi tani është Administrator!");
   };
 
-  const addPoints = (amount: number) => {
+  const addPoints = async (amount: number) => {
     if (!currentUser) return;
     const updated = { ...currentUser, points: currentUser.points + amount };
     setCurrentUser(updated);
-    setAllUsers(allUsers.map(u => u.id === updated.id ? updated : u));
+    try {
+      await setDoc(doc(db, 'users', currentUser.id), { points: updated.points }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'users');
+    }
   };
 
   const isDarkTheme = theme === 'black';
@@ -160,7 +200,15 @@ const App: React.FC = () => {
   };
 
   if (!currentUser) return <LoginScreen onLogin={login} />;
-  if (!currentUser.proficiency && !currentUser.isAdmin) return <ProfileSetup onSave={(p, g) => { const u = { ...currentUser, proficiency: p, goal: g }; setCurrentUser(u); setAllUsers(allUsers.map(x => x.id === u.id ? u : x)); }} />;
+  if (!currentUser.proficiency && !currentUser.isAdmin) return <ProfileSetup onSave={async (p, g) => { 
+    const u = { ...currentUser, proficiency: p, goal: g }; 
+    setCurrentUser(u); 
+    try {
+      await setDoc(doc(db, 'users', u.id), { proficiency: p, goal: g }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'users');
+    }
+  }} />;
 
   const SidebarContent = () => (
     <div className={`flex flex-col h-full ${isDarkTheme ? 'bg-zinc-900 border-zinc-800' : 'bg-black/5 border-black/5'}`}>
@@ -187,7 +235,15 @@ const App: React.FC = () => {
       </nav>
       <div className="p-3 border-t border-black/5">
         <NavLink to="/settings" icon="gear" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Cilësimet</NavLink>
-        <div className="flex items-center gap-3 p-3 mt-2 rounded-lg cursor-pointer transition-all hover:bg-black/5" onClick={() => { localStorage.removeItem('current_user'); setCurrentUser(null); }}>
+        <div className="flex items-center gap-3 p-3 mt-2 rounded-lg cursor-pointer transition-all hover:bg-black/5" onClick={async () => { 
+          try {
+            await import('./firebase').then(m => m.logout());
+          } catch (e) {
+            console.error(e);
+          }
+          localStorage.removeItem('current_user'); 
+          setCurrentUser(null); 
+        }}>
           <div className="w-8 h-8 rounded-full flex items-center justify-center bg-white/50 text-gray-500"><i className="fas fa-arrow-right-from-bracket"></i></div>
           <span className="text-sm font-medium">Dilni</span>
         </div>
@@ -226,7 +282,7 @@ const App: React.FC = () => {
                 <Route path="/streak" element={<StreakView user={currentUser} isDark={isDarkTheme} />} />
                 <Route path="/suggestions" element={<SuggestionsView suggestions={suggestions} onAdd={text => setSuggestions([...suggestions, { id: Date.now().toString(), userId: currentUser.id, userName: currentUser.name, text, date: new Date().toLocaleDateString() }])} isDark={isDarkTheme} />} />
                 <Route path="/settings" element={<SettingsView currentTheme={theme} onThemeChange={setTheme} isDark={isDarkTheme} />} />
-                {currentUser.isAdmin && <Route path="/admin" element={<AdminView users={allUsers} suggestions={suggestions} loginLogs={loginLogs} dialogues={dialogues} animations={animations} onDialogueAdd={d => setDialogues([...dialogues, d])} onDialogueRemove={id => setDialogues(dialogues.filter(d => d.id !== id))} onAnimationAdd={a => setAnimations([...animations, a])} onAnimationRemove={id => setAnimations(animations.filter(a => a.id !== id))} onMakeAdmin={handleMakeAdmin} onRespondSuggestion={(id, msg) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, adminResponse: msg } : s))} isDark={isDarkTheme} />} />}
+                {currentUser.isAdmin && <Route path="/admin" element={<AdminView users={allUsers} suggestions={suggestions} loginLogs={loginLogs} dialogues={dialogues} animations={animations} onDialogueAdd={async d => { try { await setDoc(doc(db, 'dialogues', d.id), { ...d, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'dialogues'); } }} onDialogueRemove={async id => { try { await deleteDoc(doc(db, 'dialogues', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'dialogues'); } }} onAnimationAdd={async a => { try { await setDoc(doc(db, 'animations', a.id), { ...a, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'animations'); } }} onAnimationRemove={async id => { try { await deleteDoc(doc(db, 'animations', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'animations'); } }} onMakeAdmin={handleMakeAdmin} onRespondSuggestion={(id, msg) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, adminResponse: msg } : s))} isDark={isDarkTheme} />} />}
                 <Route path="/childrens-corner" element={<ChildrensCornerView animations={animations} isDark={isDarkTheme} />} />
               </Routes>
             </div>
@@ -237,17 +293,42 @@ const App: React.FC = () => {
   );
 };
 
-const LoginScreen: React.FC<{ onLogin: (d: any) => void }> = ({ onLogin }) => {
-  const [formData, setFormData] = useState({ name: '', password: '' });
+const LoginScreen: React.FC<{ onLogin: (user: any) => void }> = ({ onLogin }) => {
+  const [loading, setLoading] = useState(false);
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    try {
+      const user = await loginWithGoogle();
+      onLogin({
+        id: user.uid,
+        name: user.displayName || 'Përdorues',
+        email: user.email,
+      });
+    } catch (error) {
+      console.error("Login failed", error);
+      alert("Gabim gjatë hyrjes me Google.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-black">
       <div className="w-full max-w-[320px] space-y-8">
-        <div className="text-center"><AngliBotLogo className="w-24 h-24 mx-auto mb-6 shadow-2xl" /><h1 className="text-2xl font-black mb-2">AngliBot AI</h1><p className="text-gray-500 text-sm">Hyr në llogari</p></div>
-        <form onSubmit={e => { e.preventDefault(); onLogin(formData); }} className="space-y-4">
-          <input type="text" placeholder="Emri" className="w-full px-4 py-3.5 border rounded-2xl outline-none focus:border-black text-sm" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
-          <input type="password" placeholder="Fjalëkalimi" className="w-full px-4 py-3.5 border rounded-2xl outline-none focus:border-black text-sm" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
-          <button type="submit" className="w-full bg-black text-white py-4 rounded-2xl font-bold shadow-xl active:scale-95">Hyr</button>
-        </form>
+        <div className="text-center">
+          <AngliBotLogo className="w-24 h-24 mx-auto mb-6 shadow-2xl" />
+          <h1 className="text-2xl font-black mb-2">AngliBot AI</h1>
+          <p className="text-gray-500 text-sm">Hyr në llogari për të vazhduar</p>
+        </div>
+        <button 
+          onClick={handleGoogleLogin} 
+          disabled={loading}
+          className="w-full bg-black text-white py-4 rounded-2xl font-bold shadow-xl active:scale-95 flex items-center justify-center gap-3"
+        >
+          <i className="fab fa-google"></i>
+          {loading ? "Duke u lidhur..." : "Hyr me Google"}
+        </button>
       </div>
     </div>
   );
@@ -528,7 +609,7 @@ const ChildrensCornerView: React.FC<{ animations: AnimationMedia[], isDark?: boo
   );
 };
 
-const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs: LoginEvent[], dialogues: Dialogue[], animations: AnimationMedia[], onDialogueAdd: (d: Dialogue) => void, onDialogueRemove: (id: string) => void, onAnimationAdd: (a: AnimationMedia) => void, onAnimationRemove: (id: string) => void, onMakeAdmin: (id: string, p?: string) => void, onRespondSuggestion: (id: string, msg: string) => void, isDark?: boolean }> = ({ users, suggestions, loginLogs, dialogues, animations, onDialogueAdd, onDialogueRemove, onAnimationAdd, onAnimationRemove, onMakeAdmin, onRespondSuggestion, isDark }) => {
+const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs: LoginEvent[], dialogues: Dialogue[], animations: AnimationMedia[], onDialogueAdd: (d: Dialogue) => Promise<void>, onDialogueRemove: (id: string) => Promise<void>, onAnimationAdd: (a: AnimationMedia) => Promise<void>, onAnimationRemove: (id: string) => Promise<void>, onMakeAdmin: (id: string, p?: string) => void, onRespondSuggestion: (id: string, msg: string) => void, isDark?: boolean }> = ({ users, suggestions, loginLogs, dialogues, animations, onDialogueAdd, onDialogueRemove, onAnimationAdd, onAnimationRemove, onMakeAdmin, onRespondSuggestion, isDark }) => {
   const [tab, setTab] = useState('users');
   const [newD, setNewD] = useState({ title: '', content: '', level: 'Beginner' as Proficiency, audioData: '', videoData: '' });
   const [newAnim, setNewAnim] = useState({ title: '', videoData: '' });
@@ -558,18 +639,28 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
             </select>
             <textarea className="w-full h-40 p-4 border rounded-2xl outline-none" placeholder="Teksti i bisedës" value={newD.content} onChange={e => setNewD({...newD, content: e.target.value})} />
             <div>
-              <label className="block text-xs font-bold mb-1">Audio (Opsionale)</label>
+              <label className="block text-xs font-bold mb-1">Audio (Opsionale - max 700KB)</label>
               <input type="file" accept="audio/*" onChange={e => {
-                const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onloadend = () => setNewD({...newD, audioData: r.result as string}); r.readAsDataURL(f); }
+                const f = e.target.files?.[0]; 
+                if (f) { 
+                  if (f.size > 700 * 1024) {
+                    alert("Skedari audio është shumë i madh për t'u ruajtur në bazën e të dhënave. Ju lutem përdorni një skedar më të vogël se 700KB.");
+                    e.target.value = '';
+                    return;
+                  }
+                  const r = new FileReader(); 
+                  r.onloadend = () => setNewD({...newD, audioData: r.result as string}); 
+                  r.readAsDataURL(f); 
+                }
               }} />
             </div>
             <div>
-              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar - max 2MB)</label>
+              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar - max 700KB)</label>
               <input type="file" accept="video/mp4,video/*" onChange={e => {
                 const f = e.target.files?.[0]; 
                 if (f) { 
-                  if (f.size > 2 * 1024 * 1024) {
-                    alert("Skedari është shumë i madh për t'u ruajtur në shfletues. Ju lutem përdorni një URL ose një skedar më të vogël se 2MB.");
+                  if (f.size > 700 * 1024) {
+                    alert("Skedari është shumë i madh për t'u ruajtur në bazën e të dhënave. Ju lutem përdorni një URL ose një skedar më të vogël se 700KB.");
                     e.target.value = '';
                     return;
                   }
@@ -583,7 +674,7 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
               <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Videos (p.sh. https://.../video.mp4)</label>
               <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newD.videoData.startsWith('http') ? newD.videoData : ''} onChange={e => setNewD({...newD, videoData: e.target.value})} />
             </div>
-            <button onClick={() => { onDialogueAdd({ id: Date.now().toString(), ...newD, addedBy: 'Admin' }); setNewD({title:'', content:'', level:'Beginner', audioData:'', videoData:''}); alert("U publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Dialogun</button>
+            <button onClick={async () => { await onDialogueAdd({ id: Date.now().toString(), ...newD, addedBy: 'Admin' }); setNewD({title:'', content:'', level:'Beginner', audioData:'', videoData:''}); alert("U publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Dialogun</button>
           </div>
           <div>
             <h3 className="font-bold text-lg mb-4">Dialogjet Ekzistuese</h3>
@@ -602,12 +693,12 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
             <h3 className="font-bold text-lg">Shto Animacion të Ri</h3>
             <input className="w-full p-4 border rounded-2xl outline-none" placeholder="Titulli i Animacionit" value={newAnim.title} onChange={e => setNewAnim({...newAnim, title: e.target.value})} />
             <div>
-              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar - max 2MB)</label>
+              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar - max 700KB)</label>
               <input type="file" accept="video/mp4,video/*" onChange={e => {
                 const f = e.target.files?.[0]; 
                 if (f) { 
-                  if (f.size > 2 * 1024 * 1024) {
-                    alert("Skedari është shumë i madh për t'u ruajtur në shfletues. Ju lutem përdorni një URL ose një skedar më të vogël se 2MB.");
+                  if (f.size > 700 * 1024) {
+                    alert("Skedari është shumë i madh për t'u ruajtur në bazën e të dhënave. Ju lutem përdorni një URL ose një skedar më të vogël se 700KB.");
                     e.target.value = '';
                     return;
                   }
@@ -621,7 +712,7 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
               <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Videos</label>
               <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newAnim.videoData.startsWith('http') ? newAnim.videoData : ''} onChange={e => setNewAnim({...newAnim, videoData: e.target.value})} />
             </div>
-            <button onClick={() => { onAnimationAdd({ id: Date.now().toString(), ...newAnim, addedBy: 'Admin' }); setNewAnim({title:'', videoData:''}); alert("Animacioni u publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Animacionin</button>
+            <button onClick={async () => { await onAnimationAdd({ id: Date.now().toString(), ...newAnim, addedBy: 'Admin' }); setNewAnim({title:'', videoData:''}); alert("Animacioni u publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Animacionin</button>
           </div>
           <div>
             <h3 className="font-bold text-lg mb-4">Animacionet Ekzistuese</h3>
