@@ -4,15 +4,35 @@ import { Proficiency } from "../types";
 
 // Always initialize GoogleGenAI with a named parameter
 const getAI = () => {
-  // Sipas rregullave të platformës, përdorim process.env.GEMINI_API_KEY
-  // Vite do ta zëvendësojë këtë me vlerën reale gjatë build-it
-  const apiKey = process.env.GEMINI_API_KEY;
+  let key = '';
   
-  if (!apiKey || apiKey === 'undefined' || apiKey === 'NO_KEY') {
-    console.error("AngliBot: API Key nuk u gjet në process.env.GEMINI_API_KEY. Kontrolloni Settings -> Secrets.");
+  // 1. Provon process.env (Injektuar nga Vite define ose mjedisi)
+  try {
+    if (typeof process !== 'undefined' && process.env) {
+      key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.API_KEY;
+    }
+  } catch (e) {}
+
+  // 2. Provon import.meta.env (Mënyra standarde e Vite)
+  if (!key || key === 'undefined') {
+    try {
+      const metaEnv = (import.meta as any).env;
+      if (metaEnv) {
+        key = metaEnv.VITE_GEMINI_API_KEY || metaEnv.GEMINI_API_KEY || metaEnv.VITE_API_KEY;
+      }
+    } catch (e) {}
+  }
+
+  // 3. Pastrim i vlerave string "undefined" ose "null" që vijnë nga env
+  if (key === 'undefined' || key === 'null' || !key) {
+    key = '';
+  }
+
+  if (!key) {
+    console.error("AngliBot: API Key nuk u gjet. Ju lutem shtoni GEMINI_API_KEY te Settings -> Secrets.");
   }
   
-  return new GoogleGenAI({ apiKey: apiKey || 'NO_KEY' });
+  return new GoogleGenAI({ apiKey: key || 'NO_KEY' });
 };
 
 const CATEGORIES = [
