@@ -45,14 +45,22 @@ export const translateText = async (text: string, fromAlbanian: boolean) => {
   }
 };
 
-export const chatWithAI = async (message: string, proficiency: Proficiency = 'Beginner') => {
+export const chatWithAI = async (message: string, proficiency: Proficiency = 'Beginner', history: {role: string, text: string}[] = []) => {
   try {
     const ai = getAI();
+    
+    // Format history for Gemini API
+    const formattedHistory = history.map(msg => ({
+      role: msg.role === 'user' ? 'user' : 'model',
+      parts: [{ text: msg.text }]
+    }));
+
     const chat = ai.chats.create({
       model: 'gemini-3-flash-preview',
       config: {
         systemInstruction: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdorimusin të flasë Anglisht. Je miqësor dhe edukativ.`,
       },
+      history: formattedHistory,
     });
 
     const response = await withTimeout(chat.sendMessage({ message }));

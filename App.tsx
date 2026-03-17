@@ -372,11 +372,13 @@ const PerkthimView: React.FC<{ onTranslate: () => void, isDark?: boolean }> = ({
   const [text, setText] = useState('');
   const [result, setResult] = useState('');
   const [loading, setLoading] = useState(false);
+  const [fromAlbanian, setFromAlbanian] = useState(true);
+
   const handleTranslate = async () => {
     if (!text.trim()) return;
     setLoading(true);
     try {
-      const res = await translateText(text, true);
+      const res = await translateText(text, fromAlbanian);
       setResult(res);
       onTranslate();
     } finally {
@@ -385,9 +387,17 @@ const PerkthimView: React.FC<{ onTranslate: () => void, isDark?: boolean }> = ({
   };
   return (
     <div className="space-y-8 max-w-2xl mx-auto">
-      <h2 className="text-3xl font-black">Përkthim</h2>
+      <div className="flex justify-between items-center">
+        <h2 className="text-3xl font-black">Përkthim</h2>
+        <button 
+          onClick={() => setFromAlbanian(!fromAlbanian)}
+          className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${isDark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-gray-200 hover:bg-gray-50'}`}
+        >
+          {fromAlbanian ? 'Shqip → Anglisht' : 'Anglisht → Shqip'}
+        </button>
+      </div>
       <div className={`border rounded-3xl p-6 shadow-xl ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white'}`}>
-        <textarea className="w-full h-40 bg-transparent outline-none text-xl font-medium resize-none" placeholder="Shkruani këtu..." value={text} onChange={e => setText(e.target.value)} />
+        <textarea className="w-full h-40 bg-transparent outline-none text-xl font-medium resize-none" placeholder={fromAlbanian ? "Shkruani në Shqip..." : "Type in English..."} value={text} onChange={e => setText(e.target.value)} />
         <div className="flex justify-end pt-4"><button onClick={handleTranslate} className="bg-black text-white px-8 py-3 rounded-2xl font-bold">{loading ? "..." : "Përkthe"}</button></div>
       </div>
       {result && <div className={`border p-8 rounded-3xl animate-in fade-in shadow-2xl ${isDark ? 'bg-zinc-800' : 'bg-white'}`}><p className="text-2xl font-bold">{result}</p></div>}
@@ -401,10 +411,16 @@ const ChatView: React.FC<{ level: Proficiency, isDark?: boolean }> = ({ level, i
   const [loading, setLoading] = useState(false);
   const send = async () => {
     if (!input.trim()) return;
-    const m = input; setInput(''); setMessages(p => [...p, { role: 'user', text: m }]);
+    const m = input; 
+    setInput(''); 
+    
+    // Ruajmë historikun aktual për ta dërguar te AI
+    const currentHistory = [...messages];
+    
+    setMessages(p => [...p, { role: 'user', text: m }]);
     setLoading(true); 
     try {
-      const r = await chatWithAI(m, level); 
+      const r = await chatWithAI(m, level, currentHistory); 
       setMessages(p => [...p, { role: 'model', text: r }]); 
     } finally {
       setLoading(false);
