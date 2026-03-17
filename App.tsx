@@ -52,19 +52,19 @@ const App: React.FC = () => {
 
   // Persistence: Load on startup
   useEffect(() => {
-    const savedTheme = localStorage.getItem('app_theme') as ThemeColor;
+    const savedTheme = localStorage.getItem('app_theme_v2') as ThemeColor;
     if (savedTheme) setTheme(savedTheme);
 
     let parsedSuggestions = [];
-    try { parsedSuggestions = JSON.parse(localStorage.getItem('app_suggestions') || '[]'); } catch (e) {}
+    try { parsedSuggestions = JSON.parse(localStorage.getItem('app_suggestions_v2') || '[]'); } catch (e) {}
     setSuggestions(parsedSuggestions);
 
     let parsedLoginLogs = [];
-    try { parsedLoginLogs = JSON.parse(localStorage.getItem('app_login_logs') || '[]'); } catch (e) {}
+    try { parsedLoginLogs = JSON.parse(localStorage.getItem('app_login_logs_v2') || '[]'); } catch (e) {}
     setLoginLogs(parsedLoginLogs);
 
     try {
-      const persistedUser = localStorage.getItem('current_user');
+      const persistedUser = localStorage.getItem('current_user_v2');
       if (persistedUser) {
         const user = JSON.parse(persistedUser);
         setCurrentUser(user);
@@ -104,7 +104,7 @@ const App: React.FC = () => {
           handleFirestoreError(error, OperationType.LIST, 'animations');
         });
 
-        unsubscribeUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+        unsubscribeUsers = onSnapshot(collection(db, 'app_users'), (snapshot) => {
           const fetchedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
           setAllUsers(fetchedUsers);
           
@@ -115,7 +115,7 @@ const App: React.FC = () => {
             return updated ? updated : prev;
           });
         }, (error) => {
-          handleFirestoreError(error, OperationType.LIST, 'users');
+          handleFirestoreError(error, OperationType.LIST, 'app_users');
         });
       } else {
         if (unsubscribeDialogues) unsubscribeDialogues();
@@ -135,10 +135,10 @@ const App: React.FC = () => {
   // Persistence: Save on every state change
   useEffect(() => {
     try {
-      localStorage.setItem('app_theme', theme);
-      localStorage.setItem('app_suggestions', JSON.stringify(suggestions));
-      localStorage.setItem('app_login_logs', JSON.stringify(loginLogs));
-      if (currentUser) localStorage.setItem('current_user', JSON.stringify(currentUser));
+      localStorage.setItem('app_theme_v2', theme);
+      localStorage.setItem('app_suggestions_v2', JSON.stringify(suggestions));
+      localStorage.setItem('app_login_logs_v2', JSON.stringify(loginLogs));
+      if (currentUser) localStorage.setItem('current_user_v2', JSON.stringify(currentUser));
     } catch (e) {
       console.error("Error saving to localStorage (might be full due to large media files):", e);
     }
@@ -146,14 +146,14 @@ const App: React.FC = () => {
 
   const login = async (data: { id: string; name: string; email: string }) => {
     try {
-      const userRef = doc(db, 'users', data.id);
+      const userRef = doc(db, 'app_users', data.id);
       const userSnap = await getDoc(userRef);
       
       let updatedUser: User;
       const today = new Date().toDateString();
 
       if (!userSnap.exists()) {
-        const isAdmin = data.email === 'pajtim1.2.bollobani@gmail.com' || data.email === 'bollobaniflavio@gmail.com';
+        const isAdmin = data.email === 'bollobaniflavio@gmail.com';
         updatedUser = { 
           id: data.id, 
           name: data.name, 
@@ -180,20 +180,20 @@ const App: React.FC = () => {
       setCurrentUser(updatedUser);
       setLoginLogs(prev => [{ id: Date.now().toString(), userId: updatedUser.id, userName: updatedUser.name, timestamp: updatedUser.lastLogin }, ...prev]);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'users');
+      handleFirestoreError(error, OperationType.WRITE, 'app_users');
     }
   };
 
   const handleMakeAdmin = async (userId: string) => {
     try {
-      const userRef = doc(db, 'users', userId);
+      const userRef = doc(db, 'app_users', userId);
       await setDoc(userRef, { isAdmin: true }, { merge: true });
       if (currentUser && currentUser.id === userId) {
         setCurrentUser({ ...currentUser, isAdmin: true });
       }
       alert("Përdoruesi tani është Administrator!");
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'users');
+      handleFirestoreError(error, OperationType.UPDATE, 'app_users');
     }
   };
 
@@ -202,9 +202,9 @@ const App: React.FC = () => {
     const updated = { ...currentUser, points: currentUser.points + amount };
     setCurrentUser(updated);
     try {
-      await setDoc(doc(db, 'users', currentUser.id), { points: updated.points }, { merge: true });
+      await setDoc(doc(db, 'app_users', currentUser.id), { points: updated.points }, { merge: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'users');
+      handleFirestoreError(error, OperationType.UPDATE, 'app_users');
     }
   };
 
@@ -219,9 +219,9 @@ const App: React.FC = () => {
     const u = { ...currentUser, proficiency: p, goal: g }; 
     setCurrentUser(u); 
     try {
-      await setDoc(doc(db, 'users', u.id), { proficiency: p, goal: g }, { merge: true });
+      await setDoc(doc(db, 'app_users', u.id), { proficiency: p, goal: g }, { merge: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'users');
+      handleFirestoreError(error, OperationType.UPDATE, 'app_users');
     }
   }} />;
 
@@ -256,7 +256,7 @@ const App: React.FC = () => {
           } catch (e) {
             console.error(e);
           }
-          localStorage.removeItem('current_user'); 
+          localStorage.removeItem('current_user_v2'); 
           setCurrentUser(null); 
         }}>
           <div className="w-8 h-8 rounded-full flex items-center justify-center bg-white/50 text-gray-500"><i className="fas fa-arrow-right-from-bracket"></i></div>
