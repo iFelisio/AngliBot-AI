@@ -2,11 +2,23 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Proficiency } from "../types";
 
-// Always initialize GoogleGenAI with a named parameter using process.env.GEMINI_API_KEY
+// Always initialize GoogleGenAI with a named parameter
 const getAI = () => {
-  const key = process.env.GEMINI_API_KEY || process.env.API_KEY || import.meta.env.VITE_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || '';
+  // Përdorim çelësin që keni dhënë si parazgjedhje për të siguruar që punon në Vercel
+  let key = 'AIzaSyAM3hq1Y-jZ-d8aWKm_oIH34rDlMyJyOyQ';
+  
+  try {
+    // Përpiqemi të marrim nga environment variables nëse ekzistojnë
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      const envKey = import.meta.env.VITE_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+      if (envKey) key = envKey;
+    }
+  } catch (e) {
+    console.warn("Could not read import.meta.env");
+  }
+
   if (!key) {
-    console.error("Mungon çelësi i API-së (API Key). Ju lutem shtoni GEMINI_API_KEY në Netlify.");
+    console.error("Mungon çelësi i API-së (API Key).");
   }
   return new GoogleGenAI({ apiKey: key });
 };
