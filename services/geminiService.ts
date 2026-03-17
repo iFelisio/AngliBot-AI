@@ -89,14 +89,14 @@ export const translateText = async (text: string, fromAlbanian: boolean) => {
   const errorMsg = lastError?.message || lastError?.toString() || "";
   
   if (errorMsg.includes("API_KEY_INVALID") || errorMsg.includes("403") || errorMsg.includes("API key not valid")) {
-    return "Gabim: API Key i pavlefshëm. Ju lutem kontrolloni Settings -> Secrets.";
+    return `Gabim: API Key i refuzuar nga Google. (${errorMsg})`;
   }
   
   if (errorMsg.includes("quota") || errorMsg.includes("429")) {
     return "Gabim: Keni tejkaluar limitin e kërkesave (Quota exceeded). Provoni përsëri më vonë.";
   }
 
-  return `Gabim në përkthim. ${errorMsg ? `(${errorMsg})` : "Kontrolloni lidhjen ose API Key."}`;
+  return `Gabim në përkthim: ${errorMsg || "Kontrolloni lidhjen ose API Key."}`;
 };
 
 export const chatWithAI = async (message: string, proficiency: Proficiency = 'Beginner', history: {role: string, text: string}[] = []) => {
