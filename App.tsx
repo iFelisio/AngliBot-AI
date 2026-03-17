@@ -48,9 +48,24 @@ const App: React.FC = () => {
   const [loginLogs, setLoginLogs] = useState<LoginEvent[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  const [apiKeyMissing, setApiKeyMissing] = useState(false);
 
   // Persistence: Load on startup
   useEffect(() => {
+    // Kontrollojmë nëse API Key mungon
+    const checkKey = () => {
+      const sources = [
+        (import.meta as any).env?.VITE_GEMINI_API_KEY,
+        (import.meta as any).env?.GEMINI_API_KEY,
+        (import.meta as any).env?.VITE_API_KEY,
+        (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : null),
+        (typeof process !== 'undefined' ? process.env?.VITE_GEMINI_API_KEY : null),
+        (typeof process !== 'undefined' ? process.env?.API_KEY : null),
+      ];
+      const key = sources.find(s => s && typeof s === 'string' && s.length > 10 && s !== 'undefined' && s !== 'null');
+      setApiKeyMissing(!key);
+    };
+    checkKey();
     const savedTheme = localStorage.getItem('app_theme') as ThemeColor;
     if (savedTheme) setTheme(savedTheme);
 
@@ -291,6 +306,19 @@ const App: React.FC = () => {
           </header>
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             <div className="max-w-3xl mx-auto w-full px-4 py-8 md:px-8">
+              {apiKeyMissing && (
+                <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-4 animate-in slide-in-from-top duration-500">
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0 text-red-600">
+                    <i className="fas fa-exclamation-triangle"></i>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-red-900">API Key Mungon!</h3>
+                    <p className="text-sm text-red-700 mt-1">
+                      Shërbimet AI nuk do të funksionojnë. Ju lutem shtoni <strong>GEMINI_API_KEY</strong> te <strong>Settings &rarr; Secrets</strong> në AI Studio, ose <strong>VITE_GEMINI_API_KEY</strong> në Vercel.
+                    </p>
+                  </div>
+                </div>
+              )}
               <Routes>
                 <Route path="/" element={<PerkthimView onTranslate={() => addPoints(5)} isDark={isDarkTheme} />} />
                 <Route path="/dialogues" element={<DialoguesView dialogues={dialogues} level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} />} />

@@ -5,35 +5,34 @@ import { Proficiency } from "../types";
 // Always initialize GoogleGenAI with a named parameter
 const getAI = () => {
   // 1. Marrim çelësin nga të gjitha burimet e mundshme
-  let key = '';
+  // Në Vite, process.env shpesh nuk është i disponueshëm në browser, 
+  // por platforma AI Studio Build e injekton atë.
+  // Në Vercel, duhet të përdorim VITE_GEMINI_API_KEY.
   
-  // Provon process.env (Injektuar nga vite.config.ts)
-  if (typeof process !== 'undefined' && process.env) {
-    key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.API_KEY || '';
-  }
+  const sources = [
+    (import.meta as any).env?.VITE_GEMINI_API_KEY,
+    (import.meta as any).env?.GEMINI_API_KEY,
+    (import.meta as any).env?.VITE_API_KEY,
+    (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : null),
+    (typeof process !== 'undefined' ? process.env?.VITE_GEMINI_API_KEY : null),
+    (typeof process !== 'undefined' ? process.env?.API_KEY : null),
+  ];
 
-  // Provon import.meta.env (Mënyra standarde e Vite)
-  if (!key || key === 'undefined') {
-    try {
-      const metaEnv = (import.meta as any).env;
-      if (metaEnv) {
-        key = metaEnv.VITE_GEMINI_API_KEY || metaEnv.GEMINI_API_KEY || metaEnv.VITE_API_KEY || '';
-      }
-    } catch (e) {}
-  }
+  let key = sources.find(s => s && typeof s === 'string' && s.length > 10 && s !== 'undefined' && s !== 'null') || '';
+  key = key.trim();
 
-  // 2. Pastrim i rreptë
-  const finalKey = typeof key === 'string' ? key.trim() : '';
-
-  // 3. Diagnostikim në Konsolë (F12)
-  if (!finalKey || finalKey === 'undefined' || finalKey === 'null') {
+  // Diagnostikim në Konsolë (F12)
+  if (!key) {
     console.error("❌ AngliBot: API Key MUNGON! Shko te Settings -> Secrets dhe shto GEMINI_API_KEY.");
+    if (typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app'))) {
+      console.warn("Në Vercel: Sigurohuni që keni shtuar VITE_GEMINI_API_KEY te Environment Variables.");
+    }
   } else {
     // Tregojmë vetëm 4 shkronjat e para për siguri
-    console.log(`✅ AngliBot: API Key u gjet (Gjatësia: ${finalKey.length}, Fillon me: ${finalKey.substring(0, 4)}...)`);
+    console.log(`✅ AngliBot: API Key u gjet (Gjatësia: ${key.length}, Fillon me: ${key.substring(0, 4)}...)`);
   }
   
-  return new GoogleGenAI({ apiKey: finalKey || 'MISSING_KEY' });
+  return new GoogleGenAI({ apiKey: key || 'MISSING_KEY' });
 };
 
 const CATEGORIES = [
@@ -51,10 +50,10 @@ const recentWords: string[] = [];
 const recentPairs: string[] = [];
 const recentSentences: string[] = [];
 
-const withTimeout = <T>(promise: Promise<T>, timeoutMs: number = 15000): Promise<T> => {
+const withTimeout = <T>(promise: Promise<T>, timeoutMs: number = 30000): Promise<T> => {
   return Promise.race([
     promise,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Timeout (30s)')), timeoutMs))
   ]);
 };
 
