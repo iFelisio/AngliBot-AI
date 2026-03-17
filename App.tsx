@@ -4,8 +4,10 @@ import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { ThemeColor, User, Dialogue, Suggestion, Proficiency, Goal, LoginEvent } from './types';
 import { translateText, chatWithAI } from './services/geminiService';
 import { Wordle, Hangman, SentenceBuilder, WordScramble, MemoryMatch } from './components/Games';
-import { loginWithGoogle, db, auth, handleFirestoreError, OperationType } from './firebase';
+import { loginWithGoogle, db, auth, storage, handleFirestoreError, OperationType } from './firebase';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, getDoc, getDocFromServer } from 'firebase/firestore';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { onAuthStateChanged } from 'firebase/auth';
 
 // Custom Logo Component
 const AngliBotLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" }) => (
@@ -82,38 +84,51 @@ const App: React.FC = () => {
     testConnection();
 
     // Firebase Listeners
-    const unsubscribeDialogues = onSnapshot(collection(db, 'dialogues'), (snapshot) => {
-      const fetchedDialogues = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Dialogue));
-      setDialogues(fetchedDialogues.length > 0 ? fetchedDialogues : INITIAL_DIALOGUES);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'dialogues');
-    });
+    let unsubscribeDialogues: () => void;
+    let unsubscribeAnimations: () => void;
+    let unsubscribeUsers: () => void;
 
-    const unsubscribeAnimations = onSnapshot(collection(db, 'animations'), (snapshot) => {
-      const fetchedAnimations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AnimationMedia));
-      setAnimations(fetchedAnimations);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'animations');
-    });
+    const authUnsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        unsubscribeDialogues = onSnapshot(collection(db, 'dialogues'), (snapshot) => {
+          const fetchedDialogues = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Dialogue));
+          setDialogues(fetchedDialogues.length > 0 ? fetchedDialogues : INITIAL_DIALOGUES);
+        }, (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'dialogues');
+        });
 
-    const unsubscribeUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
-      const fetchedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
-      setAllUsers(fetchedUsers);
-      
-      // Update currentUser if it exists in the fetched users
-      setCurrentUser(prev => {
-        if (!prev) return prev;
-        const updated = fetchedUsers.find(u => u.id === prev.id);
-        return updated ? updated : prev;
-      });
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'users');
+        unsubscribeAnimations = onSnapshot(collection(db, 'animations'), (snapshot) => {
+          const fetchedAnimations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AnimationMedia));
+          setAnimations(fetchedAnimations);
+        }, (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'animations');
+        });
+
+        unsubscribeUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+          const fetchedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+          setAllUsers(fetchedUsers);
+          
+          // Update currentUser if it exists in the fetched users
+          setCurrentUser(prev => {
+            if (!prev) return prev;
+            const updated = fetchedUsers.find(u => u.id === prev.id);
+            return updated ? updated : prev;
+          });
+        }, (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'users');
+        });
+      } else {
+        if (unsubscribeDialogues) unsubscribeDialogues();
+        if (unsubscribeAnimations) unsubscribeAnimations();
+        if (unsubscribeUsers) unsubscribeUsers();
+      }
     });
 
     return () => {
-      unsubscribeDialogues();
-      unsubscribeAnimations();
-      unsubscribeUsers();
+      authUnsubscribe();
+      if (unsubscribeDialogues) unsubscribeDialogues();
+      if (unsubscribeAnimations) unsubscribeAnimations();
+      if (unsubscribeUsers) unsubscribeUsers();
     };
   }, []);
 
@@ -613,6 +628,96 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
   const [tab, setTab] = useState('users');
   const [newD, setNewD] = useState({ title: '', content: '', level: 'Beginner' as Proficiency, audioData: '', videoData: '' });
   const [newAnim, setNewAnim] = useState({ title: '', videoData: '' });
+  
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [animVideoFile, setAnimVideoFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  const uploadFile = async (file: File, path: string): Promise<string> => {
+    const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
+    const uploadTask = uploadBytesResumable(storageRef, file);
+    
+    return new Promise((resolve, reject) => {
+      uploadTask.on('state_changed', 
+        (snapshot) => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          setUploadProgress(Math.round(progress));
+        }, 
+        (error) => reject(error), 
+        async () => {
+          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+          resolve(downloadURL);
+        }
+      );
+    });
+  };
+
+  const handlePublishDialogue = async () => {
+    setIsUploading(true);
+    setUploadProgress(0);
+    try {
+      let finalAudioData = newD.audioData;
+      let finalVideoData = newD.videoData;
+
+      if (audioFile) {
+        finalAudioData = await uploadFile(audioFile, 'dialogues/audio');
+      }
+      if (videoFile) {
+        finalVideoData = await uploadFile(videoFile, 'dialogues/video');
+      }
+
+      await onDialogueAdd({ 
+        id: Date.now().toString(), 
+        ...newD, 
+        audioData: finalAudioData,
+        videoData: finalVideoData,
+        addedBy: 'Admin' 
+      });
+      
+      setNewD({title:'', content:'', level:'Beginner', audioData:'', videoData:''}); 
+      setAudioFile(null);
+      setVideoFile(null);
+      alert("U publikua me sukses!");
+    } catch (error) {
+      console.error("Error uploading files:", error);
+      alert("Gabim gjatë ngarkimit të skedarëve. Sigurohuni që Storage është konfiguruar.");
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const handlePublishAnimation = async () => {
+    setIsUploading(true);
+    setUploadProgress(0);
+    try {
+      let finalVideoData = newAnim.videoData;
+
+      if (animVideoFile) {
+        finalVideoData = await uploadFile(animVideoFile, 'animations/video');
+      }
+
+      await onAnimationAdd({ 
+        id: Date.now().toString(), 
+        ...newAnim, 
+        videoData: finalVideoData,
+        addedBy: 'Admin' 
+      });
+      
+      setNewAnim({title:'', videoData:''}); 
+      setAnimVideoFile(null);
+      alert("Animacioni u publikua me sukses!");
+    } catch (error) {
+      console.error("Error uploading files:", error);
+      alert("Gabim gjatë ngarkimit të skedarëve. Sigurohuni që Storage është konfiguruar.");
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
   return (
     <div className="space-y-10">
       <div className="flex flex-wrap gap-4 border-b pb-2">
@@ -639,42 +744,36 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
             </select>
             <textarea className="w-full h-40 p-4 border rounded-2xl outline-none" placeholder="Teksti i bisedës" value={newD.content} onChange={e => setNewD({...newD, content: e.target.value})} />
             <div>
-              <label className="block text-xs font-bold mb-1">Audio (Opsionale - max 700KB)</label>
+              <label className="block text-xs font-bold mb-1">Audio (Opsionale)</label>
               <input type="file" accept="audio/*" onChange={e => {
                 const f = e.target.files?.[0]; 
                 if (f) { 
-                  if (f.size > 700 * 1024) {
-                    alert("Skedari audio është shumë i madh për t'u ruajtur në bazën e të dhënave. Ju lutem përdorni një skedar më të vogël se 700KB.");
-                    e.target.value = '';
-                    return;
-                  }
-                  const r = new FileReader(); 
-                  r.onloadend = () => setNewD({...newD, audioData: r.result as string}); 
-                  r.readAsDataURL(f); 
+                  setAudioFile(f);
+                  setNewD({...newD, audioData: ''}); // Clear URL if file selected
                 }
               }} />
             </div>
             <div>
-              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar - max 700KB)</label>
+              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar)</label>
               <input type="file" accept="video/mp4,video/*" onChange={e => {
                 const f = e.target.files?.[0]; 
                 if (f) { 
-                  if (f.size > 700 * 1024) {
-                    alert("Skedari është shumë i madh për t'u ruajtur në bazën e të dhënave. Ju lutem përdorni një URL ose një skedar më të vogël se 700KB.");
-                    e.target.value = '';
-                    return;
-                  }
-                  const r = new FileReader(); 
-                  r.onloadend = () => setNewD({...newD, videoData: r.result as string}); 
-                  r.readAsDataURL(f); 
+                  setVideoFile(f);
+                  setNewD({...newD, videoData: ''}); // Clear URL if file selected
                 }
               }} />
             </div>
             <div>
               <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Videos (p.sh. https://.../video.mp4)</label>
-              <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newD.videoData.startsWith('http') ? newD.videoData : ''} onChange={e => setNewD({...newD, videoData: e.target.value})} />
+              <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newD.videoData.startsWith('http') ? newD.videoData : ''} onChange={e => { setNewD({...newD, videoData: e.target.value}); setVideoFile(null); }} />
             </div>
-            <button onClick={async () => { await onDialogueAdd({ id: Date.now().toString(), ...newD, addedBy: 'Admin' }); setNewD({title:'', content:'', level:'Beginner', audioData:'', videoData:''}); alert("U publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Dialogun</button>
+            <button 
+              onClick={handlePublishDialogue} 
+              disabled={isUploading}
+              className={`w-full py-4 text-white rounded-2xl font-bold transition-all ${isUploading ? 'bg-gray-400 cursor-not-allowed' : 'bg-black active:scale-95'}`}
+            >
+              {isUploading ? `Duke ngarkuar... ${uploadProgress}%` : 'Publiko Dialogun'}
+            </button>
           </div>
           <div>
             <h3 className="font-bold text-lg mb-4">Dialogjet Ekzistuese</h3>
@@ -693,26 +792,26 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
             <h3 className="font-bold text-lg">Shto Animacion të Ri</h3>
             <input className="w-full p-4 border rounded-2xl outline-none" placeholder="Titulli i Animacionit" value={newAnim.title} onChange={e => setNewAnim({...newAnim, title: e.target.value})} />
             <div>
-              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar - max 700KB)</label>
+              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar)</label>
               <input type="file" accept="video/mp4,video/*" onChange={e => {
                 const f = e.target.files?.[0]; 
                 if (f) { 
-                  if (f.size > 700 * 1024) {
-                    alert("Skedari është shumë i madh për t'u ruajtur në bazën e të dhënave. Ju lutem përdorni një URL ose një skedar më të vogël se 700KB.");
-                    e.target.value = '';
-                    return;
-                  }
-                  const r = new FileReader(); 
-                  r.onloadend = () => setNewAnim({...newAnim, videoData: r.result as string}); 
-                  r.readAsDataURL(f); 
+                  setAnimVideoFile(f);
+                  setNewAnim({...newAnim, videoData: ''}); // Clear URL if file selected
                 }
               }} />
             </div>
             <div>
               <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Videos</label>
-              <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newAnim.videoData.startsWith('http') ? newAnim.videoData : ''} onChange={e => setNewAnim({...newAnim, videoData: e.target.value})} />
+              <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newAnim.videoData.startsWith('http') ? newAnim.videoData : ''} onChange={e => { setNewAnim({...newAnim, videoData: e.target.value}); setAnimVideoFile(null); }} />
             </div>
-            <button onClick={async () => { await onAnimationAdd({ id: Date.now().toString(), ...newAnim, addedBy: 'Admin' }); setNewAnim({title:'', videoData:''}); alert("Animacioni u publikua!"); }} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Publiko Animacionin</button>
+            <button 
+              onClick={handlePublishAnimation} 
+              disabled={isUploading}
+              className={`w-full py-4 text-white rounded-2xl font-bold transition-all ${isUploading ? 'bg-gray-400 cursor-not-allowed' : 'bg-black active:scale-95'}`}
+            >
+              {isUploading ? `Duke ngarkuar... ${uploadProgress}%` : 'Publiko Animacionin'}
+            </button>
           </div>
           <div>
             <h3 className="font-bold text-lg mb-4">Animacionet Ekzistuese</h3>
