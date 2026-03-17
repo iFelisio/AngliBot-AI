@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { ThemeColor, User, Dialogue, Suggestion, Proficiency, Goal, LoginEvent } from './types';
+import { ThemeColor, User, Dialogue, Suggestion, Proficiency, Goal, LoginEvent, AnimationMedia } from './types';
 import { translateText, chatWithAI, processContent } from './services/geminiService';
 import { Wordle, Hangman, SentenceBuilder, WordScramble, MemoryMatch } from './components/Games';
 import { loginWithGoogle, db, auth, storage, handleFirestoreError, OperationType } from './firebase';
@@ -24,6 +24,15 @@ const AngliBotLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" 
 
 const INITIAL_DIALOGUES: Dialogue[] = [
   { id: '1', title: 'Daily Greetings', content: 'A: Hello! How are you?\nB: I am fine, thank you.', addedBy: 'Admin', level: 'Beginner' },
+  { id: '2', title: 'At the Restaurant', content: 'A: Can I see the menu, please?\nB: Of course, here it is.\nA: I would like to order a pizza.\nB: Anything to drink?\nA: Just water, please.', addedBy: 'Admin', level: 'Beginner' },
+  { id: '3', title: 'Asking for Directions', content: 'A: Excuse me, where is the nearest bank?\nB: Go straight and turn left at the corner.\nA: Is it far from here?\nB: No, just a five-minute walk.', addedBy: 'Admin', level: 'Intermediate' },
+  { id: '4', title: 'Job Interview', content: 'A: Tell me about your experience.\nB: I have worked in marketing for five years.\nA: Why do you want this job?\nB: I am looking for a new challenge in a dynamic company.', addedBy: 'Admin', level: 'Advanced' },
+  { id: '5', title: 'At the Airport', content: 'A: Your passport and ticket, please.\nB: Here they are.\nA: Are you carrying any liquids?\nB: No, only my clothes and a laptop.', addedBy: 'Admin', level: 'Beginner' },
+  { id: '6', title: 'Booking a Hotel', content: 'A: I would like to book a room for two nights.\nB: Single or double?\nA: A double room with a sea view, please.\nB: That will be $150 per night.', addedBy: 'Admin', level: 'Intermediate' },
+  { id: '7', title: 'Doctor Appointment', content: 'A: What seems to be the problem?\nB: I have a terrible headache and a fever.\nA: How long have you felt this way?\nB: Since yesterday morning.', addedBy: 'Admin', level: 'Intermediate' },
+  { id: '8', title: 'Shopping for Clothes', content: 'A: Can I help you find something?\nB: Yes, I am looking for a blue shirt.\nA: What size do you need?\nB: Medium, please. Can I try it on?', addedBy: 'Admin', level: 'Beginner' },
+  { id: '9', title: 'Discussing a Movie', content: 'A: Did you see the new sci-fi movie?\nB: Yes, the special effects were amazing.\nA: What did you think of the ending?\nB: It was quite unexpected, to be honest.', addedBy: 'Admin', level: 'Advanced' },
+  { id: '10', title: 'Weather Talk', content: 'A: It is a beautiful day, isn\'t it?\nB: Yes, much better than yesterday\'s rain.\nA: Do you think it will stay sunny?\nB: I hope so, I have a picnic planned.', addedBy: 'Admin', level: 'Beginner' },
 ];
 
 const NavLink: React.FC<{ to: string; icon: string; children: React.ReactNode; highlight?: boolean; onClick?: () => void; isDark?: boolean }> = ({ to, icon, children, highlight, onClick, isDark }) => {
@@ -49,6 +58,7 @@ const App: React.FC = () => {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [loginLogs, setLoginLogs] = useState<LoginEvent[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
 
   // Persistence: Load on startup
   useEffect(() => {
@@ -244,6 +254,10 @@ const App: React.FC = () => {
         <NavLink to="/leaderboard" icon="trophy" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Renditja</NavLink>
         <NavLink to="/streak" icon="bolt" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Streak</NavLink>
         <NavLink to="/suggestions" icon="lightbulb" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Sugjerime</NavLink>
+        <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-gray-600 hover:bg-white/30 hover:text-black cursor-pointer" onClick={() => setIsAssistantOpen(true)}>
+          <i className="fas fa-circle-question w-5 text-center text-sm text-gray-500"></i>
+          <span className="text-[14px] font-medium">Ndihmë AI</span>
+        </div>
         {currentUser.isAdmin && (
           <><div className="text-[10px] uppercase font-bold text-indigo-500 px-3 mt-6 mb-2 tracking-wider">Admin</div><NavLink to="/admin" icon="shield-halved" highlight isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Admin Panel</NavLink></>
         )}
@@ -302,6 +316,21 @@ const App: React.FC = () => {
               </Routes>
             </div>
           </div>
+
+          {/* Floating AI Assistant Button */}
+          <button 
+            onClick={() => setIsAssistantOpen(true)}
+            className="fixed bottom-6 right-6 w-14 h-14 bg-black text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 transition-transform z-40"
+          >
+            <i className="fas fa-robot text-xl"></i>
+          </button>
+
+          <AIAssistant 
+            isOpen={isAssistantOpen} 
+            onClose={() => setIsAssistantOpen(false)} 
+            level={currentUser.proficiency || 'Beginner'} 
+            isDark={isDarkTheme}
+          />
         </main>
       </div>
     </HashRouter>
@@ -935,6 +964,71 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
           ))}
         </div>
       )}
+    </div>
+  );
+};
+
+const AIAssistant: React.FC<{ isOpen: boolean, onClose: () => void, level: Proficiency, isDark?: boolean }> = ({ isOpen, onClose, level, isDark }) => {
+  const [messages, setMessages] = useState<{ role: string, text: string }[]>([
+    { role: 'model', text: 'Përshëndetje! Unë jam asistenti juaj AI. Si mund t\'ju ndihmoj sot me Anglishten tuaj?' }
+  ]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const send = async () => {
+    if (!input.trim() || loading) return;
+    const userMsg = input;
+    setInput('');
+    const history = [...messages];
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setLoading(true);
+    try {
+      const response = await chatWithAI(userMsg, level, history);
+      setMessages(prev => [...prev, { role: 'model', text: response }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed bottom-6 right-6 w-[350px] h-[500px] flex flex-col rounded-[2rem] shadow-2xl border z-50 overflow-hidden animate-in slide-in-from-bottom-10 duration-300 bg-white border-black/10">
+      <div className="p-4 bg-black text-white flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          <i className="fas fa-robot"></i>
+          <span className="font-bold text-sm">Ndihmësi AI</span>
+        </div>
+        <button onClick={onClose} className="hover:opacity-70">&times;</button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+        {messages.map((m, i) => (
+          <div key={i} className={`p-3 rounded-2xl text-sm ${m.role === 'user' ? 'bg-indigo-600 text-white ml-auto max-w-[85%]' : 'bg-gray-100 text-black mr-auto max-w-[85%]'}`}>
+            {m.text}
+          </div>
+        ))}
+        {loading && <div className="text-xs italic text-gray-400">Duke menduar...</div>}
+        <div ref={messagesEndRef} />
+      </div>
+      <div className="p-4 border-t flex gap-2">
+        <input 
+          className="flex-1 text-sm p-2 outline-none" 
+          placeholder="Pyet diçka..." 
+          value={input} 
+          onChange={e => setInput(e.target.value)} 
+          onKeyDown={e => e.key === 'Enter' && send()}
+        />
+        <button onClick={send} className="text-indigo-600 font-bold text-sm">Dërgo</button>
+      </div>
     </div>
   );
 };

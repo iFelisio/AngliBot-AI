@@ -4,22 +4,39 @@ import { Proficiency } from "../types";
 
 // Always initialize GoogleGenAI with a named parameter
 const getAI = () => {
-  // Përdorim çelësin që keni dhënë si parazgjedhje për të siguruar që punon në Vercel
-  let key = 'AIzaSyAM3hq1Y-jZ-d8aWKm_oIH34rDlMyJyOyQ';
+  // 1. Prioriteti i parë: import.meta.env (Mënyra standarde për Vite/Vercel)
+  let key = '';
   
   try {
-    // Përpiqemi të marrim nga environment variables nëse ekzistojnë
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      const envKey = import.meta.env.VITE_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
-      if (envKey) key = envKey;
+    const meta = import.meta as any;
+    if (typeof meta !== 'undefined' && meta.env) {
+      key = meta.env.VITE_GEMINI_API_KEY || 
+            meta.env.VITE_API_KEY || 
+            meta.env.GEMINI_API_KEY;
     }
   } catch (e) {
-    console.warn("Could not read import.meta.env");
+    console.warn("Nuk u gjet import.meta.env", e);
   }
 
+  // 2. Prioriteti i dytë: process.env (Për ambiente Node/SSR nëse ka)
   if (!key) {
-    console.error("Mungon çelësi i API-së (API Key).");
+    try {
+      if (typeof process !== 'undefined' && process.env) {
+        key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+      }
+    } catch (e) {
+      console.warn("Nuk u gjet process.env", e);
+    }
   }
+
+  // 3. Prioriteti i tretë: Çelësi hardcoded (Si fallback i fundit)
+  if (!key) {
+    key = 'AIzaSyAM3hq1Y-jZ-d8aWKm_oIH34rDlMyJyOyQ';
+    console.warn("AngliBot: Duke përdorur çelësin fallback. Ju lutem vendosni VITE_GEMINI_API_KEY në Vercel.");
+  } else {
+    console.log("AngliBot: API Key u ngarkua me sukses nga mjedisi.");
+  }
+  
   return new GoogleGenAI({ apiKey: key });
 };
 
@@ -28,7 +45,10 @@ const CATEGORIES = [
   'Daily Life', 'Science', 'Sports', 'Music', 'History', 'Space', 'Art', 'Clothing',
   'Health', 'Education', 'Weather', 'Hobbies', 'Transportation', 'Architecture',
   'Literature', 'Movies', 'Geography', 'Politics', 'Economy', 'Social Media',
-  'Environment', 'Fashion', 'Cooking', 'Photography', 'Philosophy', 'Psychology'
+  'Environment', 'Fashion', 'Cooking', 'Photography', 'Philosophy', 'Psychology',
+  'Gardening', 'DIY', 'Fitness', 'Yoga', 'Meditation', 'Mindfulness', 'Self-Care',
+  'Productivity', 'Time Management', 'Leadership', 'Entrepreneurship', 'Marketing',
+  'Design', 'Programming', 'Data Science', 'AI', 'Robotics', 'Cybersecurity'
 ];
 
 const recentWords: string[] = [];
@@ -43,64 +63,83 @@ const withTimeout = <T>(promise: Promise<T>, timeoutMs: number = 15000): Promise
 };
 
 export const translateText = async (text: string, fromAlbanian: boolean) => {
-  try {
-    const ai = getAI();
-    const targetLang = fromAlbanian ? "English" : "Albanian";
-    const sourceLang = fromAlbanian ? "Albanian" : "English";
+  const models = ['gemini-3-flash-preview', 'gemini-1.5-flash', 'gemini-3.1-pro-preview'];
+  let lastError: any = null;
 
-    const response = await withTimeout(ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: `Translate the following ${sourceLang} word or sentence to ${targetLang}: "${text}". Only return the translation, no extra text. Ensure the translation is accurate and natural.`,
-    }));
+  for (const model of models) {
+    try {
+      const ai = getAI();
+      const targetLang = fromAlbanian ? "English" : "Albanian";
+      const sourceLang = fromAlbanian ? "Albanian" : "English";
 
-    return response.text || "Gabim në përkthim.";
-  } catch (error) {
-    console.error("Error translating text:", error);
-    return "Gabim në përkthim.";
+      const response = await withTimeout(ai.models.generateContent({
+        model: model,
+        contents: `Translate the following ${sourceLang} word or sentence to ${targetLang}: "${text}". Only return the translation, no extra text. Ensure the translation is accurate and natural.`,
+      }));
+
+      if (response.text) return response.text;
+    } catch (error) {
+      console.warn(`Translation failed with model ${model}, trying next...`, error);
+      lastError = error;
+    }
   }
+
+  console.error("All models failed in translateText:", lastError);
+  return "Gabim në përkthim. Kontrolloni lidhjen ose API Key.";
 };
 
 export const chatWithAI = async (message: string, proficiency: Proficiency = 'Beginner', history: {role: string, text: string}[] = []) => {
-  try {
-    const ai = getAI();
-    
-    // Format history for Gemini API
-    const formattedHistory = history.map(msg => ({
-      role: msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.text }]
-    }));
+  const models = ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-1.5-flash'];
+  let lastError: any = null;
 
-    const chat = ai.chats.create({
-      model: 'gemini-3.1-pro-preview',
-      config: {
-        systemInstruction: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdorimusin të flasë Anglisht. Je miqësor, edukativ dhe kreativ në shembujt që jep.`,
-      },
-      history: formattedHistory,
-    });
+  for (const model of models) {
+    try {
+      const ai = getAI();
+      const formattedHistory = history.map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.text }]
+      }));
 
-    const response = await withTimeout(chat.sendMessage({ message }));
-    return response.text || "Më vjen keq, nuk munda të përgjigjem.";
-  } catch (error) {
-    console.error("Error chatting with AI:", error);
-    return "Më vjen keq, nuk munda të përgjigjem.";
+      const chat = ai.chats.create({
+        model: model,
+        config: {
+          systemInstruction: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdorimusin të flasë Anglisht. Je miqësor, edukativ dhe kreativ në shembujt që jep.`,
+        },
+        history: formattedHistory,
+      });
+
+      const response = await withTimeout(chat.sendMessage({ message }));
+      return response.text || "Më vjen keq, nuk munda të përgjigjem.";
+    } catch (error) {
+      console.warn(`Model ${model} failed, trying next...`, error);
+      lastError = error;
+    }
   }
+  
+  console.error("All models failed in chatWithAI:", lastError);
+  return "Më vjen keq, shërbimi AI është momentalisht i padisponueshëm. Ju lutem kontrolloni API Key në Vercel.";
 };
 
 export const processContent = async (content: string, task: string, isComplex: boolean = false) => {
-  try {
-    const ai = getAI();
-    const model = isComplex ? 'gemini-3.1-pro-preview' : 'gemini-3-flash-preview';
-    
-    const response = await withTimeout(ai.models.generateContent({
-      model: model,
-      contents: `Task: ${task}\n\nContent: ${content}\n\nProvide a high-quality response based on the task and content.`,
-    }));
+  const models = isComplex ? ['gemini-3.1-pro-preview', 'gemini-3-flash-preview'] : ['gemini-3-flash-preview', 'gemini-3.1-pro-preview'];
+  let lastError: any = null;
 
-    return response.text || "Nuk u gjenerua asnjë rezultat.";
-  } catch (error) {
-    console.error("Error processing content with AI:", error);
-    return "Gabim gjatë procesimit me AI.";
+  for (const model of models) {
+    try {
+      const ai = getAI();
+      const response = await withTimeout(ai.models.generateContent({
+        model: model,
+        contents: `Task: ${task}\n\nContent: ${content}\n\nProvide a high-quality response based on the task and content.`,
+      }));
+      return response.text || "Nuk u gjenerua asnjë rezultat.";
+    } catch (error) {
+      console.warn(`Model ${model} failed in processContent, trying next...`, error);
+      lastError = error;
+    }
   }
+  
+  console.error("All models failed in processContent:", lastError);
+  return "Gabim gjatë procesimit me AI.";
 };
 
 export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'medium', exactLength?: number) => {
