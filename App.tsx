@@ -153,7 +153,7 @@ const App: React.FC = () => {
       const today = new Date().toDateString();
 
       if (!userSnap.exists()) {
-        const isAdmin = data.email === 'pajtim1.2.bollobani@gmail.com';
+        const isAdmin = data.email === 'pajtim1.2.bollobani@gmail.com' || data.email === 'bollobaniflavio@gmail.com';
         updatedUser = { 
           id: data.id, 
           name: data.name, 
