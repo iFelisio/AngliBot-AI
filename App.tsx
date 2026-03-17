@@ -297,7 +297,7 @@ const App: React.FC = () => {
                 <Route path="/streak" element={<StreakView user={currentUser} isDark={isDarkTheme} />} />
                 <Route path="/suggestions" element={<SuggestionsView suggestions={suggestions} onAdd={text => setSuggestions([...suggestions, { id: Date.now().toString(), userId: currentUser.id, userName: currentUser.name, text, date: new Date().toLocaleDateString() }])} isDark={isDarkTheme} />} />
                 <Route path="/settings" element={<SettingsView currentTheme={theme} onThemeChange={setTheme} isDark={isDarkTheme} />} />
-                {currentUser.isAdmin && <Route path="/admin" element={<AdminView users={allUsers} suggestions={suggestions} loginLogs={loginLogs} dialogues={dialogues} animations={animations} onDialogueAdd={async d => { try { await setDoc(doc(db, 'dialogues', d.id), { ...d, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'dialogues'); } }} onDialogueRemove={async id => { try { await deleteDoc(doc(db, 'dialogues', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'dialogues'); } }} onAnimationAdd={async a => { try { await setDoc(doc(db, 'animations', a.id), { ...a, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'animations'); } }} onAnimationRemove={async id => { try { await deleteDoc(doc(db, 'animations', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'animations'); } }} onMakeAdmin={handleMakeAdmin} onRespondSuggestion={(id, msg) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, adminResponse: msg } : s))} onClearLogs={() => setLoginLogs([])} isDark={isDarkTheme} />} />}
+                {currentUser.isAdmin && <Route path="/admin" element={<AdminView users={allUsers} suggestions={suggestions} loginLogs={loginLogs} dialogues={dialogues} animations={animations} onDialogueAdd={async d => { try { await setDoc(doc(db, 'dialogues', d.id), { ...d, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'dialogues'); } }} onDialogueRemove={async id => { try { await deleteDoc(doc(db, 'dialogues', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'dialogues'); } }} onAnimationAdd={async a => { try { await setDoc(doc(db, 'animations', a.id), { ...a, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'animations'); } }} onAnimationRemove={async id => { try { await deleteDoc(doc(db, 'animations', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'animations'); } }} onMakeAdmin={handleMakeAdmin} onRespondSuggestion={(id, msg) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, adminResponse: msg } : s))} onClearLogs={() => setLoginLogs([])} onDeleteUser={async id => { try { await deleteDoc(doc(db, 'users', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'users'); } }} onClearScoreboard={async () => { try { for (const u of allUsers) { if (u.points > 0) { await setDoc(doc(db, 'users', u.id), { ...u, points: 0 }); } } } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'users'); } }} onResetUserScore={async id => { try { const u = allUsers.find(user => user.id === id); if (u) { await setDoc(doc(db, 'users', id), { ...u, points: 0 }); } } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'users'); } }} isDark={isDarkTheme} />} />}
                 <Route path="/childrens-corner" element={<ChildrensCornerView animations={animations} isDark={isDarkTheme} />} />
               </Routes>
             </div>
@@ -528,12 +528,15 @@ const GamesView: React.FC<{ onWin: (pts: number) => void, level: Proficiency, is
 const LeaderboardView: React.FC<{ users: User[], isDark?: boolean }> = ({ users, isDark }) => (
   <div className="space-y-8">
     <h2 className="text-3xl font-black">Renditja</h2>
-    {users.sort((a,b) => b.points - a.points).map((u, i) => (
+    {users.filter(u => u.points > 0).sort((a,b) => b.points - a.points).map((u, i) => (
       <div key={u.id} className={`flex items-center justify-between p-6 rounded-3xl border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white shadow-sm'}`}>
         <div className="flex items-center gap-4"><span className="font-black text-gray-400"># {i+1}</span><span className="font-bold">{u.name} {u.isAdmin && "🛡️"}</span></div>
         <div className="font-black">{u.points} XP</div>
       </div>
     ))}
+    {users.filter(u => u.points > 0).length === 0 && (
+      <p className="text-gray-500 italic">Ende nuk ka asnjë student me pikë në renditje.</p>
+    )}
   </div>
 );
 
@@ -625,7 +628,7 @@ const ChildrensCornerView: React.FC<{ animations: AnimationMedia[], isDark?: boo
   );
 };
 
-const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs: LoginEvent[], dialogues: Dialogue[], animations: AnimationMedia[], onDialogueAdd: (d: Dialogue) => Promise<void>, onDialogueRemove: (id: string) => Promise<void>, onAnimationAdd: (a: AnimationMedia) => Promise<void>, onAnimationRemove: (id: string) => Promise<void>, onMakeAdmin: (id: string, p?: string) => void, onRespondSuggestion: (id: string, msg: string) => void, onClearLogs: () => void, isDark?: boolean }> = ({ users, suggestions, loginLogs, dialogues, animations, onDialogueAdd, onDialogueRemove, onAnimationAdd, onAnimationRemove, onMakeAdmin, onRespondSuggestion, onClearLogs, isDark }) => {
+const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs: LoginEvent[], dialogues: Dialogue[], animations: AnimationMedia[], onDialogueAdd: (d: Dialogue) => Promise<void>, onDialogueRemove: (id: string) => Promise<void>, onAnimationAdd: (a: AnimationMedia) => Promise<void>, onAnimationRemove: (id: string) => Promise<void>, onMakeAdmin: (id: string, p?: string) => void, onRespondSuggestion: (id: string, msg: string) => void, onClearLogs: () => void, onDeleteUser: (id: string) => Promise<void>, onClearScoreboard: () => Promise<void>, onResetUserScore: (id: string) => Promise<void>, isDark?: boolean }> = ({ users, suggestions, loginLogs, dialogues, animations, onDialogueAdd, onDialogueRemove, onAnimationAdd, onAnimationRemove, onMakeAdmin, onRespondSuggestion, onClearLogs, onDeleteUser, onClearScoreboard, onResetUserScore, isDark }) => {
   const [tab, setTab] = useState('users');
   const [newD, setNewD] = useState({ title: '', content: '', level: 'Beginner' as Proficiency, audioData: '', videoData: '' });
   const [newAnim, setNewAnim] = useState({ title: '', videoData: '' });
@@ -646,7 +649,9 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
           const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
           setUploadProgress(Math.round(progress));
         }, 
-        (error) => reject(error), 
+        (error) => {
+          reject(error);
+        }, 
         async () => {
           const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
           resolve(downloadURL);
@@ -681,9 +686,9 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
       setAudioFile(null);
       setVideoFile(null);
       alert("U publikua me sukses!");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error uploading files:", error);
-      alert("Gabim gjatë ngarkimit të skedarëve. Sigurohuni që Storage është konfiguruar.");
+      alert(`Gabim gjatë ngarkimit: ${error.message || 'Sigurohuni që Firebase Storage është aktivizuar dhe rregullat lejojnë ngarkimin.'}`);
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -710,9 +715,9 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
       setNewAnim({title:'', videoData:''}); 
       setAnimVideoFile(null);
       alert("Animacioni u publikua me sukses!");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error uploading files:", error);
-      alert("Gabim gjatë ngarkimit të skedarëve. Sigurohuni që Storage është konfiguruar.");
+      alert(`Gabim gjatë ngarkimit: ${error.message || 'Sigurohuni që Firebase Storage është aktivizuar dhe rregullat lejojnë ngarkimin.'}`);
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -723,6 +728,7 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
     <div className="space-y-10">
       <div className="flex flex-wrap gap-4 border-b pb-2">
         <button onClick={() => setTab('users')} className={`font-bold ${tab === 'users' ? 'text-black' : 'text-gray-400'}`}>Studentët</button>
+        <button onClick={() => setTab('scoreboard')} className={`font-bold ${tab === 'scoreboard' ? 'text-black' : 'text-gray-400'}`}>Renditja</button>
         <button onClick={() => setTab('dialogues')} className={`font-bold ${tab === 'dialogues' ? 'text-black' : 'text-gray-400'}`}>Dialogjet</button>
         <button onClick={() => setTab('animations')} className={`font-bold ${tab === 'animations' ? 'text-black' : 'text-gray-400'}`}>Animacionet</button>
         <button onClick={() => setTab('logs')} className={`font-bold ${tab === 'logs' ? 'text-black' : 'text-gray-400'}`}>Logjet</button>
@@ -730,9 +736,34 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
       {tab === 'users' && users.map(u => (
         <div key={u.id} className="flex justify-between items-center p-4 border rounded-2xl mb-2">
           <div><p className="font-bold">{u.name}</p><p className="text-xs text-gray-400">{u.isAdmin ? "Administrator" : "Student"}</p></div>
-          {!u.isAdmin && <button onClick={() => onMakeAdmin(u.id)} className="bg-black text-white px-4 py-2 rounded-xl text-xs font-bold">Bëje Admin</button>}
+          <div className="flex gap-2">
+            {!u.isAdmin && <button onClick={() => onMakeAdmin(u.id)} className="bg-black text-white px-4 py-2 rounded-xl text-xs font-bold">Bëje Admin</button>}
+            {!u.isAdmin && <button onClick={() => { if(window.confirm(`Jeni i sigurt që doni të fshini studentin ${u.name}?`)) onDeleteUser(u.id); }} className="bg-red-500 text-white px-4 py-2 rounded-xl text-xs font-bold">Fshi Studentin</button>}
+          </div>
         </div>
       ))}
+      {tab === 'scoreboard' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="font-bold text-lg">Menaxho Renditjen</h3>
+            <button 
+              onClick={() => { if(window.confirm('Jeni i sigurt që doni të pastroni të gjithë renditjen (të gjithë do të kenë 0 pikë)?')) onClearScoreboard(); }} 
+              className="bg-red-500 text-white px-4 py-2 rounded-xl text-xs font-bold"
+            >
+              Pastro Renditjen
+            </button>
+          </div>
+          {users.filter(u => u.points > 0).sort((a,b) => b.points - a.points).map(u => (
+            <div key={u.id} className="flex justify-between items-center p-4 border rounded-2xl mb-2">
+              <div><p className="font-bold">{u.name}</p><p className="text-xs text-gray-400">{u.points} XP</p></div>
+              <button onClick={() => { if(window.confirm(`Jeni i sigurt që doni të fshini pikët e ${u.name}?`)) onResetUserScore(u.id); }} className="bg-red-500 text-white px-4 py-2 rounded-xl text-xs font-bold">Pastro Pikët</button>
+            </div>
+          ))}
+          {users.filter(u => u.points > 0).length === 0 && (
+            <p className="text-gray-500 italic text-sm">Renditja është e zbrazët.</p>
+          )}
+        </div>
+      )}
       {tab === 'dialogues' && (
         <div className="space-y-6">
           <div className="space-y-4 border-b pb-6">
@@ -745,14 +776,20 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
             </select>
             <textarea className="w-full h-40 p-4 border rounded-2xl outline-none" placeholder="Teksti i bisedës" value={newD.content} onChange={e => setNewD({...newD, content: e.target.value})} />
             <div>
-              <label className="block text-xs font-bold mb-1">Audio (Opsionale)</label>
+              <label className="block text-xs font-bold mb-1">Audio (Opsionale, Ngarko Skedar)</label>
               <input type="file" accept="audio/*" onChange={e => {
                 const f = e.target.files?.[0]; 
                 if (f) { 
                   setAudioFile(f);
                   setNewD({...newD, audioData: ''}); // Clear URL if file selected
+                } else {
+                  setAudioFile(null);
                 }
               }} />
+            </div>
+            <div>
+              <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Audios (p.sh. https://.../audio.mp3)</label>
+              <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e audios" value={newD.audioData.startsWith('http') ? newD.audioData : ''} onChange={e => { setNewD({...newD, audioData: e.target.value}); setAudioFile(null); }} />
             </div>
             <div>
               <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar)</label>
@@ -761,6 +798,8 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
                 if (f) { 
                   setVideoFile(f);
                   setNewD({...newD, videoData: ''}); // Clear URL if file selected
+                } else {
+                  setVideoFile(null);
                 }
               }} />
             </div>
@@ -799,6 +838,8 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
                 if (f) { 
                   setAnimVideoFile(f);
                   setNewAnim({...newAnim, videoData: ''}); // Clear URL if file selected
+                } else {
+                  setAnimVideoFile(null);
                 }
               }} />
             </div>

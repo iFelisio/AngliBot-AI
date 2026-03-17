@@ -20,7 +20,7 @@ const recentWords: string[] = [];
 const recentPairs: string[] = [];
 const recentSentences: string[] = [];
 
-const withTimeout = <T>(promise: Promise<T>, timeoutMs: number = 8000): Promise<T> => {
+const withTimeout = <T>(promise: Promise<T>, timeoutMs: number = 15000): Promise<T> => {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
@@ -78,13 +78,29 @@ export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'med
       Difficulty Level: ${difficulty}. 
       Word length: ${lengthConstraint}
       ${avoidList}
-      CRITICAL: Do NOT pick common starter words like Apple or Banana. Pick something interesting and educational.
-      Return ONLY the word in uppercase.`,
+      CRITICAL: Do NOT pick common starter words like Apple or Banana. Pick something interesting and educational.`,
       config: {
         temperature: 1.2,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            word: { type: Type.STRING, description: "The generated word in uppercase" }
+          },
+          required: ["word"]
+        }
       }
     }));
-    const word = response.text?.trim().toUpperCase().replace(/[^A-Z]/g, '') || (exactLength === 5 ? "STUDY" : "LEARN");
+    
+    let word = "";
+    try {
+      const parsed = JSON.parse(response.text || "{}");
+      word = parsed.word?.trim().toUpperCase().replace(/[^A-Z]/g, '') || "";
+    } catch (e) {
+      word = response.text?.trim().toUpperCase().replace(/[^A-Z]/g, '') || "";
+    }
+    
+    if (!word) word = exactLength === 5 ? "STUDY" : "LEARN";
     
     if (word && word.length > 0) {
       recentWords.push(word);
@@ -164,12 +180,29 @@ export const generateSentence = async (level: Proficiency = 'Beginner') => {
       model: 'gemini-3-flash-preview',
       contents: `Generate one random English sentence for a ${level} student. 
       ${avoidList}
-      Avoid repeating common phrases. Return ONLY the sentence text.`,
+      Avoid repeating common phrases.`,
       config: {
         temperature: 1.2,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            sentence: { type: Type.STRING, description: "The generated sentence" }
+          },
+          required: ["sentence"]
+        }
       }
     }));
-    const sentence = response.text?.trim() || "Learning a new language opens many doors.";
+    
+    let sentence = "";
+    try {
+      const parsed = JSON.parse(response.text || "{}");
+      sentence = parsed.sentence?.trim() || "";
+    } catch (e) {
+      sentence = response.text?.trim() || "";
+    }
+    
+    if (!sentence) sentence = "Learning a new language opens many doors.";
     
     if (sentence) {
       recentSentences.push(sentence);
