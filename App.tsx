@@ -22,18 +22,7 @@ const AngliBotLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" 
   </div>
 );
 
-const INITIAL_DIALOGUES: Dialogue[] = [
-  { id: '1', title: 'Daily Greetings', content: 'A: Hello! How are you?\nB: I am fine, thank you.', addedBy: 'Admin', level: 'Beginner' },
-  { id: '2', title: 'At the Restaurant', content: 'A: Can I see the menu, please?\nB: Of course, here it is.\nA: I would like to order a pizza.\nB: Anything to drink?\nA: Just water, please.', addedBy: 'Admin', level: 'Beginner' },
-  { id: '3', title: 'Asking for Directions', content: 'A: Excuse me, where is the nearest bank?\nB: Go straight and turn left at the corner.\nA: Is it far from here?\nB: No, just a five-minute walk.', addedBy: 'Admin', level: 'Intermediate' },
-  { id: '4', title: 'Job Interview', content: 'A: Tell me about your experience.\nB: I have worked in marketing for five years.\nA: Why do you want this job?\nB: I am looking for a new challenge in a dynamic company.', addedBy: 'Admin', level: 'Advanced' },
-  { id: '5', title: 'At the Airport', content: 'A: Your passport and ticket, please.\nB: Here they are.\nA: Are you carrying any liquids?\nB: No, only my clothes and a laptop.', addedBy: 'Admin', level: 'Beginner' },
-  { id: '6', title: 'Booking a Hotel', content: 'A: I would like to book a room for two nights.\nB: Single or double?\nA: A double room with a sea view, please.\nB: That will be $150 per night.', addedBy: 'Admin', level: 'Intermediate' },
-  { id: '7', title: 'Doctor Appointment', content: 'A: What seems to be the problem?\nB: I have a terrible headache and a fever.\nA: How long have you felt this way?\nB: Since yesterday morning.', addedBy: 'Admin', level: 'Intermediate' },
-  { id: '8', title: 'Shopping for Clothes', content: 'A: Can I help you find something?\nB: Yes, I am looking for a blue shirt.\nA: What size do you need?\nB: Medium, please. Can I try it on?', addedBy: 'Admin', level: 'Beginner' },
-  { id: '9', title: 'Discussing a Movie', content: 'A: Did you see the new sci-fi movie?\nB: Yes, the special effects were amazing.\nA: What did you think of the ending?\nB: It was quite unexpected, to be honest.', addedBy: 'Admin', level: 'Advanced' },
-  { id: '10', title: 'Weather Talk', content: 'A: It is a beautiful day, isn\'t it?\nB: Yes, much better than yesterday\'s rain.\nA: Do you think it will stay sunny?\nB: I hope so, I have a picnic planned.', addedBy: 'Admin', level: 'Beginner' },
-];
+const INITIAL_DIALOGUES: Dialogue[] = [];
 
 const NavLink: React.FC<{ to: string; icon: string; children: React.ReactNode; highlight?: boolean; onClick?: () => void; isDark?: boolean }> = ({ to, icon, children, highlight, onClick, isDark }) => {
   const location = useLocation();
@@ -311,7 +300,29 @@ const App: React.FC = () => {
                 <Route path="/streak" element={<StreakView user={currentUser} isDark={isDarkTheme} />} />
                 <Route path="/suggestions" element={<SuggestionsView suggestions={suggestions} onAdd={text => setSuggestions([...suggestions, { id: Date.now().toString(), userId: currentUser.id, userName: currentUser.name, text, date: new Date().toLocaleDateString() }])} isDark={isDarkTheme} />} />
                 <Route path="/settings" element={<SettingsView currentTheme={theme} onThemeChange={setTheme} isDark={isDarkTheme} />} />
-                {currentUser.isAdmin && <Route path="/admin" element={<AdminView users={allUsers} suggestions={suggestions} loginLogs={loginLogs} dialogues={dialogues} animations={animations} onDialogueAdd={async d => { try { await setDoc(doc(db, 'dialogues', d.id), { ...d, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'dialogues'); } }} onDialogueRemove={async id => { try { await deleteDoc(doc(db, 'dialogues', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'dialogues'); } }} onAnimationAdd={async a => { try { await setDoc(doc(db, 'animations', a.id), { ...a, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'animations'); } }} onAnimationRemove={async id => { try { await deleteDoc(doc(db, 'animations', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'animations'); } }} onMakeAdmin={handleMakeAdmin} onRespondSuggestion={(id, msg) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, adminResponse: msg } : s))} onClearLogs={() => setLoginLogs([])} onDeleteUser={async id => { try { await deleteDoc(doc(db, 'users', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'users'); } }} onClearScoreboard={async () => { try { for (const u of allUsers) { if (u.points > 0) { await setDoc(doc(db, 'users', u.id), { ...u, points: 0 }); } } } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'users'); } }} onResetUserScore={async id => { try { const u = allUsers.find(user => user.id === id); if (u) { await setDoc(doc(db, 'users', id), { ...u, points: 0 }); } } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'users'); } }} isDark={isDarkTheme} />} />}
+                {currentUser.isAdmin && (
+                  <Route path="/admin" element={
+                    <AdminView 
+                      users={allUsers} 
+                      suggestions={suggestions} 
+                      loginLogs={loginLogs} 
+                      dialogues={dialogues} 
+                      animations={animations} 
+                      onDialogueAdd={async d => { try { await setDoc(doc(db, 'dialogues', d.id), { ...d, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'dialogues'); } }} 
+                      onDialogueRemove={async id => { try { await deleteDoc(doc(db, 'dialogues', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'dialogues'); } }} 
+                      onClearDialogues={async () => { try { for (const d of dialogues) { await deleteDoc(doc(db, 'dialogues', d.id)); } } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'dialogues'); } }}
+                      onAnimationAdd={async a => { try { await setDoc(doc(db, 'animations', a.id), { ...a, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'animations'); } }} 
+                      onAnimationRemove={async id => { try { await deleteDoc(doc(db, 'animations', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'animations'); } }} 
+                      onMakeAdmin={handleMakeAdmin} 
+                      onRespondSuggestion={(id, msg) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, adminResponse: msg } : s))} 
+                      onClearLogs={() => setLoginLogs([])} 
+                      onDeleteUser={async id => { try { await deleteDoc(doc(db, 'users', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'users'); } }} 
+                      onClearScoreboard={async () => { try { for (const u of allUsers) { if (u.points > 0) { await setDoc(doc(db, 'users', u.id), { ...u, points: 0 }); } } } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'users'); } }} 
+                      onResetUserScore={async id => { try { const u = allUsers.find(user => user.id === id); if (u) { await setDoc(doc(db, 'users', id), { ...u, points: 0 }); } } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'users'); } }} 
+                      isDark={isDarkTheme} 
+                    />
+                  } />
+                )}
                 <Route path="/childrens-corner" element={<ChildrensCornerView animations={animations} isDark={isDarkTheme} />} />
               </Routes>
             </div>
@@ -710,7 +721,43 @@ const ChildrensCornerView: React.FC<{ animations: AnimationMedia[], isDark?: boo
   );
 };
 
-const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs: LoginEvent[], dialogues: Dialogue[], animations: AnimationMedia[], onDialogueAdd: (d: Dialogue) => Promise<void>, onDialogueRemove: (id: string) => Promise<void>, onAnimationAdd: (a: AnimationMedia) => Promise<void>, onAnimationRemove: (id: string) => Promise<void>, onMakeAdmin: (id: string, p?: string) => void, onRespondSuggestion: (id: string, msg: string) => void, onClearLogs: () => void, onDeleteUser: (id: string) => Promise<void>, onClearScoreboard: () => Promise<void>, onResetUserScore: (id: string) => Promise<void>, isDark?: boolean }> = ({ users, suggestions, loginLogs, dialogues, animations, onDialogueAdd, onDialogueRemove, onAnimationAdd, onAnimationRemove, onMakeAdmin, onRespondSuggestion, onClearLogs, onDeleteUser, onClearScoreboard, onResetUserScore, isDark }) => {
+const AdminView: React.FC<{ 
+  users: User[], 
+  suggestions: Suggestion[], 
+  loginLogs: LoginEvent[], 
+  dialogues: Dialogue[], 
+  animations: AnimationMedia[], 
+  onDialogueAdd: (d: Dialogue) => Promise<void>, 
+  onDialogueRemove: (id: string) => Promise<void>, 
+  onClearDialogues: () => Promise<void>,
+  onAnimationAdd: (a: AnimationMedia) => Promise<void>, 
+  onAnimationRemove: (id: string) => Promise<void>, 
+  onMakeAdmin: (id: string, p?: string) => void, 
+  onRespondSuggestion: (id: string, msg: string) => void, 
+  onClearLogs: () => void, 
+  onDeleteUser: (id: string) => Promise<void>, 
+  onClearScoreboard: () => Promise<void>, 
+  onResetUserScore: (id: string) => Promise<void>, 
+  isDark?: boolean 
+}> = ({ 
+  users, 
+  suggestions, 
+  loginLogs, 
+  dialogues, 
+  animations, 
+  onDialogueAdd, 
+  onDialogueRemove, 
+  onClearDialogues,
+  onAnimationAdd, 
+  onAnimationRemove, 
+  onMakeAdmin, 
+  onRespondSuggestion, 
+  onClearLogs, 
+  onDeleteUser, 
+  onClearScoreboard, 
+  onResetUserScore, 
+  isDark 
+}) => {
   const [tab, setTab] = useState('users');
   const [newD, setNewD] = useState({ title: '', content: '', level: 'Beginner' as Proficiency, audioData: '', videoData: '' });
   const [newAnim, setNewAnim] = useState({ title: '', videoData: '' });
@@ -850,6 +897,7 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
         <div className="space-y-6">
           <div className="space-y-4 border-b pb-6">
             <h3 className="font-bold text-lg">Shto Dialog të Ri</h3>
+            <p className="text-[10px] text-indigo-600 font-bold uppercase tracking-widest">Skedarët ngarkohen në Firebase Storage</p>
             <input className="w-full p-4 border rounded-2xl outline-none" placeholder="Titulli" value={newD.title} onChange={e => setNewD({...newD, title: e.target.value})} />
             <select className="w-full p-4 border rounded-2xl outline-none" value={newD.level} onChange={e => setNewD({...newD, level: e.target.value as Proficiency})}>
               <option value="Beginner">Beginner</option>
@@ -898,7 +946,15 @@ const AdminView: React.FC<{ users: User[], suggestions: Suggestion[], loginLogs:
             </button>
           </div>
           <div>
-            <h3 className="font-bold text-lg mb-4">Dialogjet Ekzistuese</h3>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-lg">Dialogjet Ekzistuese</h3>
+              <button 
+                onClick={() => { if(window.confirm('Jeni i sigurt që doni të fshini TË GJITHA dialogjet?')) onClearDialogues(); }} 
+                className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg hover:bg-red-700 transition-colors"
+              >
+                Pastro të Gjitha
+              </button>
+            </div>
             {dialogues.map(d => (
               <div key={d.id} className="flex justify-between items-center p-4 border rounded-2xl mb-2">
                 <div><p className="font-bold">{d.title}</p><p className="text-xs text-gray-400">{d.level}</p></div>

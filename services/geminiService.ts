@@ -4,40 +4,15 @@ import { Proficiency } from "../types";
 
 // Always initialize GoogleGenAI with a named parameter
 const getAI = () => {
-  // 1. Prioriteti i parë: import.meta.env (Mënyra standarde për Vite/Vercel)
-  let key = '';
+  // Sipas rregullave të platformës, përdorim process.env.GEMINI_API_KEY
+  // Vite do ta zëvendësojë këtë me vlerën reale gjatë build-it
+  const apiKey = process.env.GEMINI_API_KEY;
   
-  try {
-    const meta = import.meta as any;
-    if (typeof meta !== 'undefined' && meta.env) {
-      key = meta.env.VITE_GEMINI_API_KEY || 
-            meta.env.VITE_API_KEY || 
-            meta.env.GEMINI_API_KEY;
-    }
-  } catch (e) {
-    console.warn("Nuk u gjet import.meta.env", e);
-  }
-
-  // 2. Prioriteti i dytë: process.env (Për ambiente Node/SSR nëse ka)
-  if (!key) {
-    try {
-      if (typeof process !== 'undefined' && process.env) {
-        key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-      }
-    } catch (e) {
-      console.warn("Nuk u gjet process.env", e);
-    }
-  }
-
-  // 3. Prioriteti i tretë: Çelësi hardcoded (Si fallback i fundit)
-  if (!key) {
-    key = 'AIzaSyAM3hq1Y-jZ-d8aWKm_oIH34rDlMyJyOyQ';
-    console.warn("AngliBot: Duke përdorur çelësin fallback. Ju lutem vendosni VITE_GEMINI_API_KEY në Vercel.");
-  } else {
-    console.log("AngliBot: API Key u ngarkua me sukses nga mjedisi.");
+  if (!apiKey || apiKey === 'undefined' || apiKey === 'NO_KEY') {
+    console.error("AngliBot: API Key nuk u gjet në process.env.GEMINI_API_KEY. Kontrolloni Settings -> Secrets.");
   }
   
-  return new GoogleGenAI({ apiKey: key });
+  return new GoogleGenAI({ apiKey: apiKey || 'NO_KEY' });
 };
 
 const CATEGORIES = [
@@ -63,7 +38,7 @@ const withTimeout = <T>(promise: Promise<T>, timeoutMs: number = 15000): Promise
 };
 
 export const translateText = async (text: string, fromAlbanian: boolean) => {
-  const models = ['gemini-3-flash-preview', 'gemini-1.5-flash', 'gemini-3.1-pro-preview'];
+  const models = ['gemini-3-flash-preview', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-preview'];
   let lastError: any = null;
 
   for (const model of models) {
@@ -78,18 +53,34 @@ export const translateText = async (text: string, fromAlbanian: boolean) => {
       }));
 
       if (response.text) return response.text;
-    } catch (error) {
-      console.warn(`Translation failed with model ${model}, trying next...`, error);
+    } catch (error: any) {
+      console.error(`Translation failed with model ${model}:`, error);
       lastError = error;
+      
+      // Nëse gabimi është API Key i pavlefshëm, nuk ka kuptim të provojmë modele të tjera
+      const msg = error?.message || error?.toString() || "";
+      if (msg.includes("API_KEY_INVALID") || msg.includes("403") || msg.includes("API key not valid")) {
+        break;
+      }
     }
   }
 
   console.error("All models failed in translateText:", lastError);
-  return "Gabim në përkthim. Kontrolloni lidhjen ose API Key.";
+  const errorMsg = lastError?.message || lastError?.toString() || "";
+  
+  if (errorMsg.includes("API_KEY_INVALID") || errorMsg.includes("403") || errorMsg.includes("API key not valid")) {
+    return "Gabim: API Key i pavlefshëm. Ju lutem kontrolloni Settings -> Secrets.";
+  }
+  
+  if (errorMsg.includes("quota") || errorMsg.includes("429")) {
+    return "Gabim: Keni tejkaluar limitin e kërkesave (Quota exceeded). Provoni përsëri më vonë.";
+  }
+
+  return `Gabim në përkthim. ${errorMsg ? `(${errorMsg})` : "Kontrolloni lidhjen ose API Key."}`;
 };
 
 export const chatWithAI = async (message: string, proficiency: Proficiency = 'Beginner', history: {role: string, text: string}[] = []) => {
-  const models = ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-1.5-flash'];
+  const models = ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview'];
   let lastError: any = null;
 
   for (const model of models) {
@@ -110,14 +101,29 @@ export const chatWithAI = async (message: string, proficiency: Proficiency = 'Be
 
       const response = await withTimeout(chat.sendMessage({ message }));
       return response.text || "Më vjen keq, nuk munda të përgjigjem.";
-    } catch (error) {
-      console.warn(`Model ${model} failed, trying next...`, error);
+    } catch (error: any) {
+      console.error(`Model ${model} failed in chatWithAI:`, error);
       lastError = error;
+      
+      const msg = error?.message || error?.toString() || "";
+      if (msg.includes("API_KEY_INVALID") || msg.includes("403") || msg.includes("API key not valid")) {
+        break;
+      }
     }
   }
   
   console.error("All models failed in chatWithAI:", lastError);
-  return "Më vjen keq, shërbimi AI është momentalisht i padisponueshëm. Ju lutem kontrolloni API Key në Vercel.";
+  const errorMsg = lastError?.message || lastError?.toString() || "";
+  
+  if (errorMsg.includes("API_KEY_INVALID") || errorMsg.includes("403") || errorMsg.includes("API key not valid")) {
+    return "Gabim: API Key i pavlefshëm. Ju lutem kontrolloni Settings -> Secrets.";
+  }
+  
+  if (errorMsg.includes("quota") || errorMsg.includes("429")) {
+    return "Gabim: Keni tejkaluar limitin e kërkesave (Quota exceeded). Provoni përsëri më vonë.";
+  }
+
+  return "Më vjen keq, shërbimi AI është momentalisht i padisponueshëm. " + (errorMsg ? `(${errorMsg})` : "Ju lutem kontrolloni API Key.");
 };
 
 export const processContent = async (content: string, task: string, isComplex: boolean = false) => {
@@ -139,7 +145,8 @@ export const processContent = async (content: string, task: string, isComplex: b
   }
   
   console.error("All models failed in processContent:", lastError);
-  return "Gabim gjatë procesimit me AI.";
+  const errorMsg = lastError?.message || "";
+  return `Gabim gjatë procesimit me AI. ${errorMsg ? `(${errorMsg})` : ""}`;
 };
 
 export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'medium', exactLength?: number) => {
