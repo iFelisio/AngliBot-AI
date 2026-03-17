@@ -4,35 +4,36 @@ import { Proficiency } from "../types";
 
 // Always initialize GoogleGenAI with a named parameter
 const getAI = () => {
+  // 1. Marrim çelësin nga të gjitha burimet e mundshme
   let key = '';
   
-  // 1. Provon process.env (Injektuar nga Vite define ose mjedisi)
-  try {
-    if (typeof process !== 'undefined' && process.env) {
-      key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.API_KEY;
-    }
-  } catch (e) {}
+  // Provon process.env (Injektuar nga vite.config.ts)
+  if (typeof process !== 'undefined' && process.env) {
+    key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.API_KEY || '';
+  }
 
-  // 2. Provon import.meta.env (Mënyra standarde e Vite)
+  // Provon import.meta.env (Mënyra standarde e Vite)
   if (!key || key === 'undefined') {
     try {
       const metaEnv = (import.meta as any).env;
       if (metaEnv) {
-        key = metaEnv.VITE_GEMINI_API_KEY || metaEnv.GEMINI_API_KEY || metaEnv.VITE_API_KEY;
+        key = metaEnv.VITE_GEMINI_API_KEY || metaEnv.GEMINI_API_KEY || metaEnv.VITE_API_KEY || '';
       }
     } catch (e) {}
   }
 
-  // 3. Pastrim i vlerave string "undefined" ose "null" që vijnë nga env
-  if (key === 'undefined' || key === 'null' || !key) {
-    key = '';
-  }
+  // 2. Pastrim i rreptë
+  const finalKey = typeof key === 'string' ? key.trim() : '';
 
-  if (!key) {
-    console.error("AngliBot: API Key nuk u gjet. Ju lutem shtoni GEMINI_API_KEY te Settings -> Secrets.");
+  // 3. Diagnostikim në Konsolë (F12)
+  if (!finalKey || finalKey === 'undefined' || finalKey === 'null') {
+    console.error("❌ AngliBot: API Key MUNGON! Shko te Settings -> Secrets dhe shto GEMINI_API_KEY.");
+  } else {
+    // Tregojmë vetëm 4 shkronjat e para për siguri
+    console.log(`✅ AngliBot: API Key u gjet (Gjatësia: ${finalKey.length}, Fillon me: ${finalKey.substring(0, 4)}...)`);
   }
   
-  return new GoogleGenAI({ apiKey: key || 'NO_KEY' });
+  return new GoogleGenAI({ apiKey: finalKey || 'MISSING_KEY' });
 };
 
 const CATEGORIES = [
