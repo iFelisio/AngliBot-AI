@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { ThemeColor, User, Dialogue, Suggestion, Proficiency, Goal, LoginEvent } from './types';
-import { translateText, chatWithAI } from './services/geminiService';
+import { translateText, chatWithAI, processContent } from './services/geminiService';
 import { Wordle, Hangman, SentenceBuilder, WordScramble, MemoryMatch } from './components/Games';
 import { loginWithGoogle, db, auth, storage, handleFirestoreError, OperationType } from './firebase';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, getDoc, getDocFromServer } from 'firebase/firestore';
@@ -374,6 +374,9 @@ const PerkthimView: React.FC<{ onTranslate: () => void, isDark?: boolean }> = ({
   const [loading, setLoading] = useState(false);
   const [fromAlbanian, setFromAlbanian] = useState(true);
 
+  const [grammarResult, setGrammarResult] = useState('');
+  const [grammarLoading, setGrammarLoading] = useState(false);
+
   const handleTranslate = async () => {
     if (!text.trim()) return;
     setLoading(true);
@@ -385,22 +388,56 @@ const PerkthimView: React.FC<{ onTranslate: () => void, isDark?: boolean }> = ({
       setLoading(false);
     }
   };
+
+  const handleGrammarCheck = async () => {
+    if (!text.trim()) return;
+    setGrammarLoading(true);
+    try {
+      const res = await processContent(text, "Check grammar and spelling. Provide corrections and a brief explanation in Albanian.", true);
+      setGrammarResult(res);
+    } finally {
+      setGrammarLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-8 max-w-2xl mx-auto">
       <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-black">Përkthim</h2>
-        <button 
-          onClick={() => setFromAlbanian(!fromAlbanian)}
-          className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${isDark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-gray-200 hover:bg-gray-50'}`}
-        >
-          {fromAlbanian ? 'Shqip → Anglisht' : 'Anglisht → Shqip'}
-        </button>
+        <h2 className="text-3xl font-black">Përkthim & Inteligjencë</h2>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => setFromAlbanian(!fromAlbanian)}
+            className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${isDark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-gray-200 hover:bg-gray-50'}`}
+          >
+            {fromAlbanian ? 'Shqip → Anglisht' : 'Anglisht → Shqip'}
+          </button>
+        </div>
       </div>
       <div className={`border rounded-3xl p-6 shadow-xl ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white'}`}>
         <textarea className="w-full h-40 bg-transparent outline-none text-xl font-medium resize-none" placeholder={fromAlbanian ? "Shkruani në Shqip..." : "Type in English..."} value={text} onChange={e => setText(e.target.value)} />
-        <div className="flex justify-end pt-4"><button onClick={handleTranslate} className="bg-black text-white px-8 py-3 rounded-2xl font-bold">{loading ? "..." : "Përkthe"}</button></div>
+        <div className="flex justify-end gap-3 pt-4">
+          <button onClick={handleGrammarCheck} className={`px-6 py-3 rounded-2xl font-bold border ${isDark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-gray-200 hover:bg-gray-50'}`}>
+            {grammarLoading ? "..." : "Kontrollo Gramatikën"}
+          </button>
+          <button onClick={handleTranslate} className="bg-black text-white px-8 py-3 rounded-2xl font-bold">
+            {loading ? "..." : "Përkthe"}
+          </button>
+        </div>
       </div>
-      {result && <div className={`border p-8 rounded-3xl animate-in fade-in shadow-2xl ${isDark ? 'bg-zinc-800' : 'bg-white'}`}><p className="text-2xl font-bold">{result}</p></div>}
+      {result && (
+        <div className={`border p-8 rounded-3xl animate-in fade-in shadow-2xl ${isDark ? 'bg-zinc-800' : 'bg-white'}`}>
+          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Përkthimi:</p>
+          <p className="text-2xl font-bold">{result}</p>
+        </div>
+      )}
+      {grammarResult && (
+        <div className={`border p-8 rounded-3xl animate-in fade-in shadow-2xl ${isDark ? 'bg-zinc-800' : 'bg-white'}`}>
+          <p className="text-xs font-bold uppercase text-indigo-500 mb-2">Analiza e Gramatikës (Gemini Pro):</p>
+          <div className="prose prose-sm max-w-none dark:prose-invert">
+            {grammarResult.split('\n').map((line, i) => <p key={i}>{line}</p>)}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

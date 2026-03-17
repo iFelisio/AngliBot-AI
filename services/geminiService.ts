@@ -25,7 +25,10 @@ const getAI = () => {
 
 const CATEGORIES = [
   'Animals', 'Travel', 'Food', 'Technology', 'Nature', 'Business', 'Emotions', 
-  'Daily Life', 'Science', 'Sports', 'Music', 'History', 'Space', 'Art', 'Clothing'
+  'Daily Life', 'Science', 'Sports', 'Music', 'History', 'Space', 'Art', 'Clothing',
+  'Health', 'Education', 'Weather', 'Hobbies', 'Transportation', 'Architecture',
+  'Literature', 'Movies', 'Geography', 'Politics', 'Economy', 'Social Media',
+  'Environment', 'Fashion', 'Cooking', 'Photography', 'Philosophy', 'Psychology'
 ];
 
 const recentWords: string[] = [];
@@ -47,7 +50,7 @@ export const translateText = async (text: string, fromAlbanian: boolean) => {
 
     const response = await withTimeout(ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Translate the following ${sourceLang} word or sentence to ${targetLang}: "${text}". Only return the translation, no extra text.`,
+      contents: `Translate the following ${sourceLang} word or sentence to ${targetLang}: "${text}". Only return the translation, no extra text. Ensure the translation is accurate and natural.`,
     }));
 
     return response.text || "Gabim në përkthim.";
@@ -68,9 +71,9 @@ export const chatWithAI = async (message: string, proficiency: Proficiency = 'Be
     }));
 
     const chat = ai.chats.create({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3.1-pro-preview',
       config: {
-        systemInstruction: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdorimusin të flasë Anglisht. Je miqësor dhe edukativ.`,
+        systemInstruction: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdorimusin të flasë Anglisht. Je miqësor, edukativ dhe kreativ në shembujt që jep.`,
       },
       history: formattedHistory,
     });
@@ -83,24 +86,42 @@ export const chatWithAI = async (message: string, proficiency: Proficiency = 'Be
   }
 };
 
+export const processContent = async (content: string, task: string, isComplex: boolean = false) => {
+  try {
+    const ai = getAI();
+    const model = isComplex ? 'gemini-3.1-pro-preview' : 'gemini-3-flash-preview';
+    
+    const response = await withTimeout(ai.models.generateContent({
+      model: model,
+      contents: `Task: ${task}\n\nContent: ${content}\n\nProvide a high-quality response based on the task and content.`,
+    }));
+
+    return response.text || "Nuk u gjenerua asnjë rezultat.";
+  } catch (error) {
+    console.error("Error processing content with AI:", error);
+    return "Gabim gjatë procesimit me AI.";
+  }
+};
+
 export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'medium', exactLength?: number) => {
   try {
     const ai = getAI();
     const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
     
-    const lengthConstraint = exactLength ? `EXACTLY ${exactLength} characters long.` : `4-8 chars.`;
-    const avoidList = recentWords.length > 0 ? `DO NOT use any of these words: ${recentWords.join(', ')}.` : '';
+    const lengthConstraint = exactLength ? `EXACTLY ${exactLength} characters long.` : `4-10 characters long.`;
+    const avoidList = recentWords.length > 0 ? `CRITICAL: DO NOT use any of these words: ${recentWords.join(', ')}.` : '';
 
     const response = await withTimeout(ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Generate one UNIQUE English word for a learning game. 
+      contents: `Generate one UNIQUE, interesting English word for a learning game. 
       Category: ${category}. 
       Difficulty Level: ${difficulty}. 
       Word length: ${lengthConstraint}
       ${avoidList}
-      CRITICAL: Do NOT pick common starter words like Apple or Banana. Pick something interesting and educational.`,
+      The word should be educational and commonly used in the specified category. 
+      Do NOT pick very common starter words. Be creative and diverse.`,
       config: {
-        temperature: 1.2,
+        temperature: 1.5,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -124,7 +145,7 @@ export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'med
     
     if (word && word.length > 0) {
       recentWords.push(word);
-      if (recentWords.length > 30) recentWords.shift();
+      if (recentWords.length > 50) recentWords.shift();
     }
     
     return word;
@@ -138,16 +159,17 @@ export const generateWordPair = async () => {
   try {
     const ai = getAI();
     const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
-    const avoidList = recentPairs.length > 0 ? `DO NOT use these English words: ${recentPairs.join(', ')}.` : '';
+    const avoidList = recentPairs.length > 0 ? `CRITICAL: DO NOT use these English words: ${recentPairs.join(', ')}.` : '';
     
     const response = await withTimeout(ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Generate 4 RANDOM pairs of English words and Albanian translations. 
+      contents: `Generate 4 UNIQUE and diverse pairs of English words and their Albanian translations. 
       Category: ${category}. 
       ${avoidList}
+      Ensure the words are relevant to the category and useful for learners. 
       Return as JSON array: [{"en": "word", "sq": "fjala"}, ...]`,
       config: {
-        temperature: 1.2,
+        temperature: 1.5,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -169,7 +191,7 @@ export const generateWordPair = async () => {
         parsed.forEach(p => {
           if (p.en) recentPairs.push(p.en);
         });
-        if (recentPairs.length > 40) recentPairs.splice(0, recentPairs.length - 40);
+        if (recentPairs.length > 60) recentPairs.splice(0, recentPairs.length - 60);
       }
       return parsed;
     } catch (e) {
@@ -194,15 +216,18 @@ export const generateWordPair = async () => {
 export const generateSentence = async (level: Proficiency = 'Beginner') => {
   try {
     const ai = getAI();
-    const avoidList = recentSentences.length > 0 ? `DO NOT use these exact sentences: ${recentSentences.join(' | ')}.` : '';
+    const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
+    const avoidList = recentSentences.length > 0 ? `CRITICAL: DO NOT use these exact sentences: ${recentSentences.join(' | ')}.` : '';
     
     const response = await withTimeout(ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Generate one random English sentence for a ${level} student. 
+      contents: `Generate one UNIQUE, natural English sentence for a ${level} level student. 
+      Category: ${category}.
       ${avoidList}
-      Avoid repeating common phrases.`,
+      The sentence should be grammatically correct and use vocabulary appropriate for the level. 
+      Be creative and avoid clichés.`,
       config: {
-        temperature: 1.2,
+        temperature: 1.5,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -226,7 +251,7 @@ export const generateSentence = async (level: Proficiency = 'Beginner') => {
     
     if (sentence) {
       recentSentences.push(sentence);
-      if (recentSentences.length > 10) recentSentences.shift();
+      if (recentSentences.length > 20) recentSentences.shift();
     }
     
     return sentence;
