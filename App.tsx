@@ -320,9 +320,10 @@ const LoginScreen: React.FC<{ onLogin: (user: any) => void }> = ({ onLogin }) =>
         name: user.displayName || 'Përdorues',
         email: user.email,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login failed", error);
-      alert("Gabim gjatë hyrjes me Google.");
+      const errorMessage = error?.message || "Gabim i panjohur.";
+      alert(`Gabim gjatë hyrjes me Google:\n\n${errorMessage}\n\nNëse jeni duke e përdorur nga AI Studio, ju lutem klikoni butonin "Open in new tab" (lart djathtas) dhe provoni përsëri.`);
     } finally {
       setLoading(false);
     }
