@@ -1,13 +1,9 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { ThemeColor, User, Dialogue, Suggestion, Proficiency, Goal, LoginEvent, AnimationMedia } from './types';
 import { translateText, chatWithAI, processContent } from './services/geminiService';
 import { Wordle, Hangman, SentenceBuilder, WordScramble, MemoryMatch } from './components/Games';
-import { loginWithGoogle, db, auth, storage, handleFirestoreError, OperationType } from './firebase';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, getDoc, getDocFromServer } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { onAuthStateChanged } from 'firebase/auth';
+import { io, Socket } from 'socket.io-client';
 
 // Custom Logo Component
 const AngliBotLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" }) => (
@@ -21,8 +17,6 @@ const AngliBotLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" 
     </svg>
   </div>
 );
-
-const INITIAL_DIALOGUES: Dialogue[] = [];
 
 const NavLink: React.FC<{ to: string; icon: string; children: React.ReactNode; highlight?: boolean; onClick?: () => void; isDark?: boolean }> = ({ to, icon, children, highlight, onClick, isDark }) => {
   const location = useLocation();
@@ -48,277 +42,185 @@ const App: React.FC = () => {
   const [loginLogs, setLoginLogs] = useState<LoginEvent[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
-  const [apiKeyMissing, setApiKeyMissing] = useState(false);
+  const [configStatus, setConfigStatus] = useState<any>(null);
+  const socketRef = useRef<Socket | null>(null);
 
-  // Persistence: Load on startup
   useEffect(() => {
-    // Kontrollojmë nëse API Key mungon
-    const checkKey = () => {
-      const sources = [
-        (import.meta as any).env?.VITE_GEMINI_API_KEY,
-        (import.meta as any).env?.GEMINI_API_KEY,
-        (import.meta as any).env?.VITE_API_KEY,
-        (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : null),
-        (typeof process !== 'undefined' ? process.env?.VITE_GEMINI_API_KEY : null),
-        (typeof process !== 'undefined' ? process.env?.API_KEY : null),
-      ];
-      const key = sources.find(s => s && typeof s === 'string' && s.length > 10 && s !== 'undefined' && s !== 'null');
-      setApiKeyMissing(!key);
-    };
-    checkKey();
-    const savedTheme = localStorage.getItem('app_theme') as ThemeColor;
-    if (savedTheme) setTheme(savedTheme);
+    // Socket initialization
+    socketRef.current = io();
+    const socket = socketRef.current;
 
-    let parsedSuggestions = [];
-    try { parsedSuggestions = JSON.parse(localStorage.getItem('app_suggestions') || '[]'); } catch (e) {}
-    setSuggestions(parsedSuggestions);
+    socket.on('users:updated', (users: User[]) => setAllUsers(users));
+    socket.on('dialogues:updated', (d: Dialogue[]) => setDialogues(d));
+    socket.on('animations:updated', (a: AnimationMedia[]) => setAnimations(a));
+    socket.on('suggestions:updated', (s: Suggestion[]) => setSuggestions(s));
+    socket.on('logs:updated', (l: LoginEvent[]) => setLoginLogs(l));
 
-    let parsedLoginLogs = [];
-    try { parsedLoginLogs = JSON.parse(localStorage.getItem('app_login_logs') || '[]'); } catch (e) {}
-    setLoginLogs(parsedLoginLogs);
-
-    try {
-      const persistedUser = localStorage.getItem('current_user');
-      if (persistedUser) {
-        const user = JSON.parse(persistedUser);
-        setCurrentUser(user);
-      }
-    } catch (e) {}
-
-    // Test Firestore connection
-    const testConnection = async () => {
+    // Initial fetch
+    const fetchData = async () => {
       try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration.");
-        }
+        const [meRes, usersRes, dialoguesRes, animationsRes, suggestionsRes, logsRes, configRes] = await Promise.all([
+          fetch('/api/auth/me'),
+          fetch('/api/users'),
+          fetch('/api/dialogues'),
+          fetch('/api/animations'),
+          fetch('/api/suggestions'),
+          fetch('/api/logs'),
+          fetch('/api/config/status')
+        ]);
+
+        if (meRes.ok) setCurrentUser(await meRes.json());
+        if (usersRes.ok) setAllUsers(await usersRes.json());
+        if (dialoguesRes.ok) setDialogues(await dialoguesRes.json());
+        if (animationsRes.ok) setAnimations(await animationsRes.json());
+        if (suggestionsRes.ok) setSuggestions(await suggestionsRes.json());
+        if (logsRes.ok) setLoginLogs(await logsRes.json());
+        if (configRes.ok) setConfigStatus(await configRes.json());
+      } catch (e) {
+        console.error("Error fetching initial data", e);
       }
     };
-    testConnection();
 
-    // Firebase Listeners
-    let unsubscribeDialogues: () => void;
-    let unsubscribeAnimations: () => void;
-    let unsubscribeUsers: () => void;
+    fetchData();
 
-    const authUnsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        unsubscribeDialogues = onSnapshot(collection(db, 'dialogues'), (snapshot) => {
-          const fetchedDialogues = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Dialogue));
-          setDialogues(fetchedDialogues.length > 0 ? fetchedDialogues : INITIAL_DIALOGUES);
-        }, (error) => {
-          handleFirestoreError(error, OperationType.LIST, 'dialogues');
-        });
-
-        unsubscribeAnimations = onSnapshot(collection(db, 'animations'), (snapshot) => {
-          const fetchedAnimations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AnimationMedia));
-          setAnimations(fetchedAnimations);
-        }, (error) => {
-          handleFirestoreError(error, OperationType.LIST, 'animations');
-        });
-
-        unsubscribeUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
-          const fetchedUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
-          setAllUsers(fetchedUsers);
-          
-          // Update currentUser if it exists in the fetched users
-          setCurrentUser(prev => {
-            if (!prev) return prev;
-            const updated = fetchedUsers.find(u => u.id === prev.id);
-            return updated ? updated : prev;
-          });
-        }, (error) => {
-          handleFirestoreError(error, OperationType.LIST, 'users');
-        });
-      } else {
-        if (unsubscribeDialogues) unsubscribeDialogues();
-        if (unsubscribeAnimations) unsubscribeAnimations();
-        if (unsubscribeUsers) unsubscribeUsers();
+    // OAuth Message Listener
+    const handleOAuthMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        setCurrentUser(event.data.user);
+        fetchData(); // Refresh all data
       }
-    });
+    };
+    window.addEventListener('message', handleOAuthMessage);
 
     return () => {
-      authUnsubscribe();
-      if (unsubscribeDialogues) unsubscribeDialogues();
-      if (unsubscribeAnimations) unsubscribeAnimations();
-      if (unsubscribeUsers) unsubscribeUsers();
+      socket.disconnect();
+      window.removeEventListener('message', handleOAuthMessage);
     };
   }, []);
 
-  // Persistence: Save on every state change
-  useEffect(() => {
+  const handleLogin = async () => {
     try {
-      localStorage.setItem('app_theme', theme);
-      localStorage.setItem('app_suggestions', JSON.stringify(suggestions));
-      localStorage.setItem('app_login_logs', JSON.stringify(loginLogs));
-      if (currentUser) localStorage.setItem('current_user', JSON.stringify(currentUser));
+      const res = await fetch('/api/auth/google/url');
+      const { url } = await res.json();
+      window.open(url, 'google_auth', 'width=600,height=700');
     } catch (e) {
-      console.error("Error saving to localStorage (might be full due to large media files):", e);
-    }
-  }, [theme, suggestions, currentUser, loginLogs]);
-
-  const login = async (data: { id: string; name: string; email: string }) => {
-    try {
-      const userRef = doc(db, 'users', data.id);
-      const userSnap = await getDoc(userRef);
-      
-      let updatedUser: User;
-      const today = new Date().toDateString();
-
-      if (!userSnap.exists()) {
-        const isAdmin = data.email === 'pajtim1.2.bollobani@gmail.com' || data.email === 'bollobaniflavio@gmail.com';
-        updatedUser = { 
-          id: data.id, 
-          name: data.name, 
-          email: data.email,
-          isAdmin: isAdmin, 
-          streak: 1, 
-          lastLogin: new Date().toISOString(), 
-          points: 0, 
-          badges: [] 
-        };
-      } else {
-        const user = userSnap.data() as User;
-        updatedUser = { ...user, lastLogin: new Date().toISOString() };
-        const lastLoginDate = new Date(user.lastLogin);
-        const diffDays = Math.ceil(Math.abs(new Date().getTime() - lastLoginDate.getTime()) / (1000 * 60 * 60 * 24));
-        
-        if (today !== lastLoginDate.toDateString()) {
-          if (diffDays === 1) updatedUser.streak += 1;
-          else if (diffDays > 1) updatedUser.streak = 1;
-        }
-      }
-
-      await setDoc(userRef, updatedUser);
-      setCurrentUser(updatedUser);
-      setLoginLogs(prev => [{ id: Date.now().toString(), userId: updatedUser.id, userName: updatedUser.name, timestamp: updatedUser.lastLogin }, ...prev]);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'users');
+      console.error("Login error", e);
     }
   };
 
-  const handleMakeAdmin = async (userId: string) => {
-    try {
-      const userRef = doc(db, 'users', userId);
-      await setDoc(userRef, { isAdmin: true }, { merge: true });
-      if (currentUser && currentUser.id === userId) {
-        setCurrentUser({ ...currentUser, isAdmin: true });
-      }
-      alert("Përdoruesi tani është Administrator!");
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'users');
-    }
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    setCurrentUser(null);
   };
 
-  const addPoints = async (amount: number) => {
+  const addPoints = async (pts: number) => {
     if (!currentUser) return;
-    const updated = { ...currentUser, points: currentUser.points + amount };
-    setCurrentUser(updated);
-    try {
-      await setDoc(doc(db, 'users', currentUser.id), { points: updated.points }, { merge: true });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'users');
+    const newPoints = (currentUser.points || 0) + pts;
+    const res = await fetch(`/api/users/${currentUser.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ points: newPoints })
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setCurrentUser(updated);
     }
   };
 
-  const isDarkTheme = theme === 'black';
-  const themeBgMap: Record<ThemeColor, string> = {
-    default: 'bg-white', black: 'bg-zinc-950 text-white', blue: 'bg-blue-50', red: 'bg-red-50', grey: 'bg-gray-100', purple: 'bg-purple-50',
-    cyan: 'bg-cyan-50', orange: 'bg-orange-50', green: 'bg-green-50', pink: 'bg-pink-50', emerald: 'bg-emerald-50', amber: 'bg-amber-50', rose: 'bg-rose-50'
-  };
+  const isDarkTheme = theme === 'dark' || (theme === 'default' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-  if (!currentUser) return <LoginScreen onLogin={login} />;
-  if (!currentUser.proficiency && !currentUser.isAdmin) return <ProfileSetup onSave={async (p, g) => { 
-    const u = { ...currentUser, proficiency: p, goal: g }; 
-    setCurrentUser(u); 
-    try {
-      await setDoc(doc(db, 'users', u.id), { proficiency: p, goal: g }, { merge: true });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'users');
-    }
-  }} />;
+  const isConfigured = configStatus && Object.values(configStatus).every(v => v === true);
 
-  const SidebarContent = () => (
-    <div className={`flex flex-col h-full ${isDarkTheme ? 'bg-zinc-900 border-zinc-800' : 'bg-black/5 border-black/5'}`}>
-      <div className="p-3">
-        <Link to="/" onClick={() => setIsSidebarOpen(false)} className={`flex items-center gap-3 w-full px-3 py-3 rounded-lg border transition-all mb-6 ${isDarkTheme ? 'border-zinc-800 hover:bg-zinc-800 text-white' : 'border-black/10 hover:bg-black/10 text-black'}`}>
-          <i className="fas fa-plus text-xs"></i>
-          <span className="text-sm font-semibold">Sesion i ri</span>
-        </Link>
-      </div>
-      <nav className="flex-1 px-3 space-y-1 overflow-y-auto custom-scrollbar">
-        <div className="text-[10px] uppercase font-bold px-3 mb-2 tracking-wider text-gray-400">Shërbimet</div>
-        <NavLink to="/" icon="language" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Përkthim</NavLink>
-        <NavLink to="/dialogues" icon="book-open" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Dialogje</NavLink>
-        <NavLink to="/childrens-corner" icon="child" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Këndi i Fëmijëve</NavLink>
-        <NavLink to="/games" icon="gamepad" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Lojëra</NavLink>
-        <NavLink to="/chat" icon="message" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>AngliBot AI</NavLink>
-        <div className="text-[10px] uppercase font-bold px-3 mt-6 mb-2 tracking-wider text-gray-400">Statistikat</div>
-        <NavLink to="/leaderboard" icon="trophy" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Renditja</NavLink>
-        <NavLink to="/streak" icon="bolt" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Streak</NavLink>
-        <NavLink to="/suggestions" icon="lightbulb" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Sugjerime</NavLink>
-        <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-gray-600 hover:bg-white/30 hover:text-black cursor-pointer" onClick={() => setIsAssistantOpen(true)}>
-          <i className="fas fa-circle-question w-5 text-center text-sm text-gray-500"></i>
-          <span className="text-[14px] font-medium">Ndihmë AI</span>
-        </div>
-        {currentUser.isAdmin && (
-          <><div className="text-[10px] uppercase font-bold text-indigo-500 px-3 mt-6 mb-2 tracking-wider">Admin</div><NavLink to="/admin" icon="shield-halved" highlight isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Admin Panel</NavLink></>
-        )}
-      </nav>
-      <div className="p-3 border-t border-black/5">
-        <NavLink to="/settings" icon="gear" isDark={isDarkTheme} onClick={() => setIsSidebarOpen(false)}>Cilësimet</NavLink>
-        <div className="flex items-center gap-3 p-3 mt-2 rounded-lg cursor-pointer transition-all hover:bg-black/5" onClick={async () => { 
-          try {
-            await import('./firebase').then(m => m.logout());
-          } catch (e) {
-            console.error(e);
-          }
-          localStorage.removeItem('current_user'); 
-          setCurrentUser(null); 
-        }}>
-          <div className="w-8 h-8 rounded-full flex items-center justify-center bg-white/50 text-gray-500"><i className="fas fa-arrow-right-from-bracket"></i></div>
-          <span className="text-sm font-medium">Dilni</span>
+  if (configStatus && !isConfigured) {
+    return <SetupRequiredView configStatus={configStatus} isDark={isDarkTheme} />;
+  }
+
+  if (!currentUser) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-6 ${isDarkTheme ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-black'}`}>
+        <div className={`max-w-md w-full p-10 rounded-[32px] shadow-2xl text-center border transition-all duration-500 ${isDarkTheme ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+          <div className="flex justify-center mb-8">
+            <AngliBotLogo className="w-20 h-20" />
+          </div>
+          <h1 className="text-4xl font-black mb-4 tracking-tight">AngliBot AI</h1>
+          <p className="text-zinc-500 mb-10 text-lg font-medium leading-relaxed">Mësoni anglisht në mënyrë interaktive me fuqinë e Inteligjencës Artificiale.</p>
+          <button 
+            onClick={handleLogin}
+            className="w-full bg-black text-white py-5 rounded-2xl font-bold flex items-center justify-center gap-4 hover:bg-zinc-800 active:scale-[0.98] transition-all shadow-xl shadow-black/10"
+          >
+            <i className="fab fa-google text-xl"></i>
+            Vazhdo me Google
+          </button>
+          <p className="mt-8 text-xs text-zinc-400 font-medium">Duke vazhduar, ju pranoni kushtet tona të përdorimit.</p>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   return (
     <HashRouter>
-      <div className={`flex h-screen overflow-hidden font-sans transition-all duration-500 ${themeBgMap[theme]} ${isDarkTheme ? 'text-white' : 'text-black'}`}>
-        <aside className="w-[260px] flex-shrink-0 flex flex-col hidden md:flex border-r border-black/5"><SidebarContent /></aside>
-        {isSidebarOpen && <div className="fixed inset-0 bg-black/50 z-50 md:hidden" onClick={() => setIsSidebarOpen(false)}><div className="absolute left-0 top-0 bottom-0 w-[280px] flex flex-col" onClick={e => e.stopPropagation()}><SidebarContent /></div></div>}
-        <main className="flex-1 flex flex-col relative overflow-hidden">
-          <header className={`h-14 border-b flex items-center justify-between px-4 sticky top-0 z-40 backdrop-blur-md ${isDarkTheme ? 'bg-zinc-950/80 border-zinc-800' : 'bg-white/30 border-black/5'}`}>
-            <div className="flex items-center gap-4">
-              <button onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2"><i className="fas fa-bars"></i></button>
-              <div className="flex items-center gap-2"><AngliBotLogo /><h1 className="font-bold text-sm">AngliBot AI</h1></div>
+      <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${isDarkTheme ? 'bg-zinc-950 text-zinc-100' : 'bg-zinc-50 text-zinc-900'}`}>
+        {/* Sidebar */}
+        <aside className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} ${isDarkTheme ? 'bg-zinc-900/50 border-r border-zinc-800' : 'bg-white/80 border-r border-zinc-200'} backdrop-blur-xl`}>
+          <div className="flex flex-col h-full p-6">
+            <div className="flex items-center gap-3 mb-10 px-2">
+              <AngliBotLogo />
+              <span className="text-xl font-black tracking-tighter">AngliBot AI</span>
+            </div>
+            
+            <nav className="flex-1 space-y-1">
+              <NavLink to="/" icon="language" isDark={isDarkTheme}>Përkthimi</NavLink>
+              <NavLink to="/chat" icon="comment-dots" isDark={isDarkTheme}>Bisedo me AI</NavLink>
+              <NavLink to="/dialogues" icon="book-open" isDark={isDarkTheme}>Dialogjet</NavLink>
+              <NavLink to="/games" icon="gamepad" isDark={isDarkTheme}>Lojërat</NavLink>
+              <NavLink to="/leaderboard" icon="trophy" isDark={isDarkTheme}>Renditja</NavLink>
+              <NavLink to="/streak" icon="fire" isDark={isDarkTheme}>Streak</NavLink>
+              <NavLink to="/suggestions" icon="lightbulb" isDark={isDarkTheme}>Sugjerime</NavLink>
+              <NavLink to="/settings" icon="cog" isDark={isDarkTheme}>Cilësimet</NavLink>
+              {currentUser.isAdmin && <NavLink to="/admin" icon="user-shield" highlight isDark={isDarkTheme}>Paneli Admin</NavLink>}
+            </nav>
+
+            <div className={`mt-auto p-4 rounded-2xl border transition-all ${isDarkTheme ? 'bg-zinc-800/50 border-zinc-700' : 'bg-zinc-100/50 border-zinc-200'}`}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg">
+                  {currentUser.name[0]}
+                </div>
+                <div className="overflow-hidden">
+                  <p className="text-sm font-bold truncate">{currentUser.name}</p>
+                  <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">{currentUser.points || 0} XP • {currentUser.streak || 0} DITË</p>
+                </div>
+              </div>
+              <button onClick={handleLogout} className="w-full py-2 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg transition-colors">Çkyçu</button>
+            </div>
+          </div>
+        </aside>
+
+        {/* Main Content */}
+        <main className="flex-1 flex flex-col min-w-0 relative">
+          <header className={`h-16 flex items-center justify-between px-6 lg:px-10 border-b transition-colors ${isDarkTheme ? 'bg-zinc-900/50 border-zinc-800' : 'bg-white/50 border-zinc-200'} backdrop-blur-md z-40`}>
+            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="lg:hidden p-2 text-zinc-500">
+              <i className={`fas fa-${isSidebarOpen ? 'times' : 'bars'} text-xl`}></i>
+            </button>
+            <div className="flex-1 lg:flex-none">
+              <h2 className="text-sm font-bold text-zinc-400 uppercase tracking-widest ml-4 lg:ml-0">
+                {useLocation().pathname === '/' ? 'Përkthimi' : 
+                 useLocation().pathname.substring(1).charAt(0).toUpperCase() + useLocation().pathname.substring(2)}
+              </h2>
             </div>
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-3 px-3 py-1.5 rounded-full border bg-white/80 border-black/5 shadow-sm">
-                <div className="flex items-center gap-1.5"><i className="fas fa-star text-yellow-500 text-[10px]"></i><span className="text-[11px] font-bold text-black">{currentUser.points}</span></div>
-                <div className="w-px h-3 bg-gray-300"></div>
-                <div className="flex items-center gap-1.5"><i className="fas fa-fire text-orange-500 text-[10px]"></i><span className="text-[11px] font-bold text-black">{currentUser.streak}</span></div>
+              <div className={`px-3 py-1.5 rounded-full flex items-center gap-2 border ${isDarkTheme ? 'bg-zinc-800 border-zinc-700' : 'bg-zinc-100 border-zinc-200'}`}>
+                <i className="fas fa-fire text-orange-500"></i>
+                <span className="text-xs font-bold">{currentUser.streak || 0}</span>
               </div>
-              <div className="w-8 h-8 rounded-full bg-black text-white flex items-center justify-center text-xs font-bold">{currentUser.name[0].toUpperCase()}</div>
+              <div className={`px-3 py-1.5 rounded-full flex items-center gap-2 border ${isDarkTheme ? 'bg-zinc-800 border-zinc-700' : 'bg-zinc-100 border-zinc-200'}`}>
+                <i className="fas fa-star text-yellow-500"></i>
+                <span className="text-xs font-bold">{currentUser.points || 0} XP</span>
+              </div>
             </div>
           </header>
+
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             <div className="max-w-3xl mx-auto w-full px-4 py-8 md:px-8">
-              {apiKeyMissing && (
-                <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-4 animate-in slide-in-from-top duration-500">
-                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0 text-red-600">
-                    <i className="fas fa-exclamation-triangle"></i>
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-red-900">API Key Mungon!</h3>
-                    <p className="text-sm text-red-700 mt-1">
-                      Shërbimet AI nuk do të funksionojnë. Ju lutem shtoni <strong>GEMINI_API_KEY</strong> te <strong>Settings &rarr; Secrets</strong> në AI Studio, ose <strong>VITE_GEMINI_API_KEY</strong> në Vercel.
-                    </p>
-                  </div>
-                </div>
-              )}
               <Routes>
                 <Route path="/" element={<PerkthimView onTranslate={() => addPoints(5)} isDark={isDarkTheme} />} />
                 <Route path="/dialogues" element={<DialoguesView dialogues={dialogues} level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
@@ -326,7 +228,13 @@ const App: React.FC = () => {
                 <Route path="/leaderboard" element={<LeaderboardView users={allUsers} isDark={isDarkTheme} />} />
                 <Route path="/chat" element={<ChatView level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
                 <Route path="/streak" element={<StreakView user={currentUser} isDark={isDarkTheme} />} />
-                <Route path="/suggestions" element={<SuggestionsView suggestions={suggestions} onAdd={text => setSuggestions([...suggestions, { id: Date.now().toString(), userId: currentUser.id, userName: currentUser.name, text, date: new Date().toLocaleDateString() }])} isDark={isDarkTheme} />} />
+                <Route path="/suggestions" element={<SuggestionsView suggestions={suggestions} onAdd={async text => {
+                  await fetch('/api/suggestions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: currentUser.id, userName: currentUser.name, text })
+                  });
+                }} isDark={isDarkTheme} />} />
                 <Route path="/settings" element={<SettingsView currentTheme={theme} onThemeChange={setTheme} isDark={isDarkTheme} />} />
                 {currentUser.isAdmin && (
                   <Route path="/admin" element={
@@ -336,173 +244,176 @@ const App: React.FC = () => {
                       loginLogs={loginLogs} 
                       dialogues={dialogues} 
                       animations={animations} 
-                      onDialogueAdd={async d => { try { await setDoc(doc(db, 'dialogues', d.id), { ...d, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'dialogues'); } }} 
-                      onDialogueRemove={async id => { try { await deleteDoc(doc(db, 'dialogues', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'dialogues'); } }} 
-                      onClearDialogues={async () => { try { for (const d of dialogues) { await deleteDoc(doc(db, 'dialogues', d.id)); } } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'dialogues'); } }}
-                      onAnimationAdd={async a => { try { await setDoc(doc(db, 'animations', a.id), { ...a, createdAt: new Date().toISOString() }); } catch (e) { handleFirestoreError(e, OperationType.CREATE, 'animations'); } }} 
-                      onAnimationRemove={async id => { try { await deleteDoc(doc(db, 'animations', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'animations'); } }} 
-                      onMakeAdmin={handleMakeAdmin} 
-                      onRespondSuggestion={(id, msg) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, adminResponse: msg } : s))} 
-                      onClearLogs={() => setLoginLogs([])} 
-                      onDeleteUser={async id => { try { await deleteDoc(doc(db, 'users', id)); } catch (e) { handleFirestoreError(e, OperationType.DELETE, 'users'); } }} 
-                      onClearScoreboard={async () => { try { for (const u of allUsers) { if (u.points > 0) { await setDoc(doc(db, 'users', u.id), { ...u, points: 0 }); } } } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'users'); } }} 
-                      onResetUserScore={async id => { try { const u = allUsers.find(user => user.id === id); if (u) { await setDoc(doc(db, 'users', id), { ...u, points: 0 }); } } catch (e) { handleFirestoreError(e, OperationType.UPDATE, 'users'); } }} 
+                      onDialogueAdd={async d => { await fetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }); }} 
+                      onDialogueRemove={async id => { await fetch(`/api/dialogues/${id}`, { method: 'DELETE' }); }} 
+                      onClearDialogues={async () => { for (const d of dialogues) { await fetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); } }}
+                      onAnimationAdd={async a => { await fetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }); }} 
+                      onAnimationRemove={async id => { await fetch(`/api/animations/${id}`, { method: 'DELETE' }); }} 
+                      onMakeAdmin={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) }); }} 
+                      onRespondSuggestion={async (id, msg) => { await fetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) }); }} 
+                      onClearLogs={async () => { await fetch('/api/logs', { method: 'DELETE' }); }} 
+                      onDeleteUser={async id => { await fetch(`/api/users/${id}`, { method: 'DELETE' }); }} 
+                      onClearScoreboard={async () => { for (const u of allUsers) { if (u.points > 0) { await fetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } } }} 
+                      onResetUserScore={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); }} 
                       isDark={isDarkTheme} 
                     />
                   } />
                 )}
-                <Route path="/childrens-corner" element={<ChildrensCornerView animations={animations} isDark={isDarkTheme} />} />
               </Routes>
             </div>
           </div>
 
-          {/* Floating AI Assistant Button */}
+          {/* AI Assistant Toggle */}
           <button 
-            onClick={() => setIsAssistantOpen(true)}
-            className="fixed bottom-6 right-6 w-14 h-14 bg-black text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 transition-transform z-40"
+            onClick={() => setIsAssistantOpen(!isAssistantOpen)}
+            className={`fixed bottom-8 right-8 w-16 h-16 rounded-full shadow-2xl flex items-center justify-center transition-all duration-500 z-50 ${isAssistantOpen ? 'bg-red-500 rotate-45' : 'bg-black hover:scale-110 active:scale-95'}`}
           >
-            <i className="fas fa-robot text-xl"></i>
+            <i className={`fas fa-${isAssistantOpen ? 'times' : 'robot'} text-white text-2xl`}></i>
+            {!isAssistantOpen && (
+              <span className="absolute -top-1 -right-1 flex h-4 w-4">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-4 w-4 bg-indigo-500"></span>
+              </span>
+            )}
           </button>
 
-          <AIAssistant 
-            isOpen={isAssistantOpen} 
-            onClose={() => setIsAssistantOpen(false)} 
-            level={currentUser.proficiency || 'Beginner'} 
-            isDark={isDarkTheme}
-          />
+          {/* AI Assistant Panel */}
+          <div className={`fixed bottom-28 right-8 w-[90vw] md:w-[400px] h-[600px] rounded-[32px] shadow-2xl border transition-all duration-500 z-50 overflow-hidden flex flex-col ${isAssistantOpen ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-20 opacity-0 scale-90 pointer-events-none'} ${isDarkTheme ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'}`}>
+            <div className="p-6 border-b flex items-center justify-between bg-black text-white">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
+                  <i className="fas fa-robot text-xl"></i>
+                </div>
+                <div>
+                  <h3 className="font-bold">Asistenti AI</h3>
+                  <p className="text-[10px] uppercase tracking-widest opacity-60">Gati për të ndihmuar</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <ChatView level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} embedded />
+            </div>
+          </div>
         </main>
       </div>
     </HashRouter>
   );
 };
 
-const LoginScreen: React.FC<{ onLogin: (user: any) => void }> = ({ onLogin }) => {
-  const [loading, setLoading] = useState(false);
+// --- Views ---
 
-  const handleGoogleLogin = async () => {
-    setLoading(true);
-    try {
-      const user = await loginWithGoogle();
-      onLogin({
-        id: user.uid,
-        name: user.displayName || 'Përdorues',
-        email: user.email,
-      });
-    } catch (error: any) {
-      console.error("Login failed", error);
-      const errorMessage = error?.message || "Gabim i panjohur.";
-      alert(`Gabim gjatë hyrjes me Google:\n\n${errorMessage}\n\nNëse jeni duke e përdorur nga AI Studio, ju lutem klikoni butonin "Open in new tab" (lart djathtas) dhe provoni përsëri.`);
-    } finally {
-      setLoading(false);
-    }
-  };
+const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ configStatus, isDark }) => {
+  const missingKeys = Object.entries(configStatus)
+    .filter(([_, value]) => !value)
+    .map(([key]) => key);
 
   return (
-    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-black">
-      <div className="w-full max-w-[320px] space-y-8">
-        <div className="text-center">
-          <AngliBotLogo className="w-24 h-24 mx-auto mb-6 shadow-2xl" />
-          <h1 className="text-2xl font-black mb-2">AngliBot AI</h1>
-          <p className="text-gray-500 text-sm">Hyr në llogari për të vazhduar</p>
+    <div className={`min-h-screen flex items-center justify-center p-6 ${isDark ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-black'}`}>
+      <div className={`max-w-2xl w-full p-10 rounded-[40px] shadow-2xl border transition-all duration-500 ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+        <div className="flex items-center gap-4 mb-8">
+          <div className="w-16 h-16 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center text-2xl">
+            <i className="fas fa-tools"></i>
+          </div>
+          <div>
+            <h1 className="text-3xl font-black tracking-tight">Konfigurimi i Nevojshëm</h1>
+            <p className="text-zinc-500 font-medium">Ju lutem plotësoni variablat e mëposhtme në AI Studio.</p>
+          </div>
         </div>
+
+        <div className="space-y-4 mb-10">
+          {Object.entries(configStatus).map(([key, isSet]) => (
+            <div key={key} className={`p-5 rounded-2xl border flex items-center justify-between ${isSet ? 'bg-emerald-50/50 border-emerald-100' : 'bg-red-50/50 border-red-100'}`}>
+              <div className="flex items-center gap-4">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isSet ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
+                  <i className={`fas fa-${isSet ? 'check' : 'times'}`}></i>
+                </div>
+                <div>
+                  <code className="text-sm font-bold">{key}</code>
+                  <p className="text-[10px] uppercase tracking-widest opacity-60 mt-0.5">
+                    {key === 'GOOGLE_CLIENT_ID' && 'ID e Klientit nga Google Cloud'}
+                    {key === 'GOOGLE_CLIENT_SECRET' && 'Sekreti i Klientit nga Google Cloud'}
+                    {key === 'SESSION_SECRET' && 'Një tekst i rastësishëm për sigurinë'}
+                    {key === 'GEMINI_API_KEY' && 'Çelësi i AI nga Google AI Studio'}
+                    {key === 'APP_URL' && 'URL-ja e këtij aplikacioni'}
+                  </p>
+                </div>
+              </div>
+              {!isSet && <span className="text-[10px] font-black text-red-600 uppercase tracking-widest">Mungon</span>}
+            </div>
+          ))}
+        </div>
+
+        <div className={`p-6 rounded-3xl mb-8 ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
+          <h3 className="font-bold mb-4 flex items-center gap-2">
+            <i className="fas fa-info-circle text-indigo-500"></i> Si t'i shtoni?
+          </h3>
+          <ol className="text-sm space-y-3 font-medium text-zinc-600 list-decimal pl-5">
+            <li>Shkoni te menyja <strong>Settings</strong> (ikona e ingranazhit) në AI Studio.</li>
+            <li>Zgjidhni <strong>Secrets</strong>.</li>
+            <li>Shtoni çdo variabël të mësipërm me emrin dhe vlerën e duhur.</li>
+            <li>Rifreskoni këtë faqe pasi t'i keni shtuar të gjitha.</li>
+          </ol>
+        </div>
+
         <button 
-          onClick={handleGoogleLogin} 
-          disabled={loading}
-          className="w-full bg-black text-white py-4 rounded-2xl font-bold shadow-xl active:scale-95 flex items-center justify-center gap-3"
+          onClick={() => window.location.reload()}
+          className="w-full bg-black text-white py-5 rounded-2xl font-bold shadow-xl hover:bg-zinc-800 active:scale-[0.98] transition-all"
         >
-          <i className="fab fa-google"></i>
-          {loading ? "Duke u lidhur..." : "Hyr me Google"}
+          Rifresko Faqen
         </button>
       </div>
     </div>
   );
 };
 
-const ProfileSetup: React.FC<{ onSave: (p: Proficiency, g: Goal) => void }> = ({ onSave }) => {
-  const [p, setP] = useState<Proficiency>('Beginner');
-  const [g, setG] = useState<Goal>('Conversational');
-  return (
-    <div className="min-h-screen bg-white flex items-center justify-center p-6 text-black">
-      <div className="max-w-sm w-full space-y-10">
-        <div className="text-center"><h2 className="text-3xl font-black">Mirësevini!</h2><p className="text-gray-500 text-sm">Zgjidh nivelin tënd</p></div>
-        <div className="space-y-4">
-          {['Beginner', 'Intermediate', 'Advanced'].map(lvl => (
-            <button key={lvl} onClick={() => setP(lvl as Proficiency)} className={`w-full py-4 rounded-2xl border text-sm font-bold transition-all ${p === lvl ? 'bg-black text-white' : 'bg-gray-50'}`}>{lvl}</button>
-          ))}
-          <button onClick={() => onSave(p, g)} className="w-full bg-black text-white py-4 rounded-2xl font-black mt-10 shadow-2xl">Vazhdo</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const PerkthimView: React.FC<{ onTranslate: () => void, isDark?: boolean }> = ({ onTranslate, isDark }) => {
+const PerkthimView: React.FC<{ onTranslate: () => void; isDark: boolean }> = ({ onTranslate, isDark }) => {
   const [text, setText] = useState('');
   const [result, setResult] = useState('');
   const [loading, setLoading] = useState(false);
-  const [fromAlbanian, setFromAlbanian] = useState(true);
-
-  const [grammarResult, setGrammarResult] = useState('');
-  const [grammarLoading, setGrammarLoading] = useState(false);
 
   const handleTranslate = async () => {
     if (!text.trim()) return;
     setLoading(true);
-    try {
-      const res = await translateText(text, fromAlbanian);
-      setResult(res);
-      onTranslate();
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGrammarCheck = async () => {
-    if (!text.trim()) return;
-    setGrammarLoading(true);
-    try {
-      const res = await processContent(text, "Check grammar and spelling. Provide corrections and a brief explanation in Albanian.", true);
-      setGrammarResult(res);
-    } finally {
-      setGrammarLoading(false);
-    }
+    const res = await translateText(text, true);
+    setResult(res);
+    setLoading(false);
+    onTranslate();
   };
 
   return (
-    <div className="space-y-8 max-w-2xl mx-auto">
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-black">Përkthim & Inteligjencë</h2>
-        <div className="flex gap-2">
-          <button 
-            onClick={() => setFromAlbanian(!fromAlbanian)}
-            className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${isDark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-gray-200 hover:bg-gray-50'}`}
-          >
-            {fromAlbanian ? 'Shqip → Anglisht' : 'Anglisht → Shqip'}
-          </button>
-        </div>
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+      <div className="text-center mb-10">
+        <h1 className="text-4xl font-black mb-3 tracking-tight">Përkthe & Mëso</h1>
+        <p className="text-zinc-500 font-medium">Shkruani në shqip dhe AI do ta kthejë në anglisht me shpjegime.</p>
       </div>
-      <div className={`border rounded-3xl p-6 shadow-xl ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white'}`}>
-        <textarea className="w-full h-40 bg-transparent outline-none text-xl font-medium resize-none" placeholder={fromAlbanian ? "Shkruani në Shqip..." : "Type in English..."} value={text} onChange={e => setText(e.target.value)} />
-        <div className="flex justify-end gap-3 pt-4">
-          <button onClick={handleGrammarCheck} className={`px-6 py-3 rounded-2xl font-bold border ${isDark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-gray-200 hover:bg-gray-50'}`}>
-            {grammarLoading ? "..." : "Kontrollo Gramatikën"}
-          </button>
-          <button onClick={handleTranslate} className="bg-black text-white px-8 py-3 rounded-2xl font-bold">
-            {loading ? "..." : "Përkthe"}
-          </button>
-        </div>
+
+      <div className={`p-8 rounded-[32px] shadow-xl border transition-all ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+        <textarea 
+          className={`w-full h-40 p-6 rounded-2xl outline-none text-lg font-medium resize-none transition-all ${isDark ? 'bg-zinc-800/50 text-white placeholder-zinc-600 focus:bg-zinc-800' : 'bg-zinc-50 text-black placeholder-zinc-400 focus:bg-zinc-100'}`}
+          placeholder="Shkruaj fjalinë këtu..."
+          value={text}
+          onChange={e => setText(e.target.value)}
+        />
+        <button 
+          onClick={handleTranslate}
+          disabled={loading}
+          className={`w-full mt-6 py-5 rounded-2xl font-bold text-white shadow-lg transition-all active:scale-[0.98] ${loading ? 'bg-zinc-400' : 'bg-black hover:bg-zinc-800 shadow-black/10'}`}
+        >
+          {loading ? <i className="fas fa-circle-notch animate-spin mr-2"></i> : <i className="fas fa-magic mr-2"></i>}
+          Përkthe me AI
+        </button>
       </div>
+
       {result && (
-        <div className={`border p-8 rounded-3xl animate-in fade-in shadow-2xl ${isDark ? 'bg-zinc-800' : 'bg-white'}`}>
-          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Përkthimi:</p>
-          <p className="text-2xl font-bold">{result}</p>
-        </div>
-      )}
-      {grammarResult && (
-        <div className={`border p-8 rounded-3xl animate-in fade-in shadow-2xl ${isDark ? 'bg-zinc-800' : 'bg-white'}`}>
-          <p className="text-xs font-bold uppercase text-indigo-500 mb-2">Analiza e Gramatikës (Gemini Pro):</p>
-          <div className="prose prose-sm max-w-none dark:prose-invert">
-            {grammarResult.split('\n').map((line, i) => <p key={i}>{line}</p>)}
+        <div className={`p-8 rounded-[32px] shadow-xl border animate-in zoom-in-95 duration-500 ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center text-white text-xs">
+              <i className="fas fa-check"></i>
+            </div>
+            <h3 className="font-bold text-lg">Rezultati</h3>
+          </div>
+          <div className={`prose max-w-none ${isDark ? 'prose-invert' : ''}`}>
+            <div className="whitespace-pre-wrap font-medium leading-relaxed opacity-90">{result}</div>
           </div>
         </div>
       )}
@@ -510,84 +421,65 @@ const PerkthimView: React.FC<{ onTranslate: () => void, isDark?: boolean }> = ({
   );
 };
 
-const ChatView: React.FC<{ level: Proficiency, isDark?: boolean }> = ({ level, isDark }) => {
-  const [messages, setMessages] = useState<{ role: string, text: string }[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const send = async () => {
-    if (!input.trim()) return;
-    const m = input; 
-    setInput(''); 
-    
-    // Ruajmë historikun aktual për ta dërguar te AI
-    const currentHistory = [...messages];
-    
-    setMessages(p => [...p, { role: 'user', text: m }]);
-    setLoading(true); 
-    try {
-      const r = await chatWithAI(m, level, currentHistory); 
-      setMessages(p => [...p, { role: 'model', text: r }]); 
-    } finally {
-      setLoading(false);
-    }
-  };
-  return (
-    <div className="flex flex-col h-[calc(100vh-10rem)]">
-      <div className="flex-1 overflow-y-auto space-y-6">
-        {messages.map((m, i) => (
-          <div key={i} className={`p-4 rounded-2xl max-w-[80%] ${m.role === 'user' ? 'bg-indigo-600 text-white ml-auto' : (isDark ? 'bg-zinc-800' : 'bg-gray-100')}`}>{m.text}</div>
-        ))}
-        {loading && <div className="p-4 italic text-gray-400">AngliBot po mendon...</div>}
-      </div>
-      <div className="pt-4 flex gap-2"><input className={`flex-1 p-4 rounded-2xl outline-none ${isDark ? 'bg-zinc-900' : 'bg-gray-100'}`} placeholder="Mesazhi..." value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} /><button onClick={send} className="bg-black text-white px-6 rounded-2xl">Dërgo</button></div>
-    </div>
-  );
-};
-
-const DialoguesView: React.FC<{ dialogues: Dialogue[], level: Proficiency, isDark?: boolean }> = ({ dialogues, level, isDark }) => {
-  const [selectedLevel, setSelectedLevel] = useState<Proficiency | 'All'>('All');
+const DialoguesView: React.FC<{ dialogues: Dialogue[]; level: Proficiency; isDark: boolean }> = ({ dialogues, level, isDark }) => {
   const [selected, setSelected] = useState<Dialogue | null>(null);
-  const filtered = selectedLevel === 'All' ? dialogues : dialogues.filter(d => d.level === selectedLevel);
-  
+  const filtered = dialogues.filter(d => d.level === level);
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <h2 className="text-3xl font-black">Dialogje Praktike</h2>
-        <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
-          {(['All', 'Beginner', 'Intermediate', 'Advanced'] as const).map(l => (
-            <button key={l} onClick={() => setSelectedLevel(l)} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${selectedLevel === l ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-black'}`}>
-              {l === 'All' ? 'Të gjitha' : l}
-            </button>
-          ))}
+    <div className="space-y-8 animate-in fade-in duration-700">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-black tracking-tight">Dialogjet</h1>
+          <p className="text-zinc-500 font-medium">Praktikoni bisedat për nivelin {level}.</p>
+        </div>
+        <div className={`px-4 py-2 rounded-xl text-xs font-bold ${isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>
+          {filtered.length} Dialogje
         </div>
       </div>
-      <div className="grid gap-4">
-        {filtered.length === 0 ? (
-          <p className="text-gray-500">Nuk ka dialogje për këtë nivel.</p>
-        ) : (
-          filtered.map(d => (
-            <button key={d.id} onClick={() => setSelected(d)} className={`p-6 rounded-3xl border text-left flex justify-between items-center ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white shadow-md'}`}>
-              <div>
-                <span className="font-bold text-lg block">{d.title}</span>
-                <span className="text-xs text-gray-500">{d.level}</span>
-              </div>
-              <i className="fas fa-chevron-right"></i>
-            </button>
-          ))
-        )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {filtered.map(d => (
+          <button 
+            key={d.id} 
+            onClick={() => setSelected(d)}
+            className={`p-6 rounded-[28px] text-left border transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg hover:shadow-xl ${isDark ? 'bg-zinc-900 border-zinc-800 hover:bg-zinc-800' : 'bg-white border-white hover:border-zinc-100'}`}
+          >
+            <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-4">
+              <i className="fas fa-headphones text-xl"></i>
+            </div>
+            <h3 className="font-bold text-lg mb-1">{d.title}</h3>
+            <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">{d.level}</p>
+          </button>
+        ))}
       </div>
+
       {selected && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
-          <div className={`w-full max-w-lg p-10 rounded-[3rem] max-h-[90vh] overflow-y-auto ${isDark ? 'bg-zinc-900' : 'bg-white'}`}>
-            <div className="flex justify-between items-start mb-6"><h3 className="text-3xl font-black">{selected.title}</h3><button onClick={() => setSelected(null)} className="text-2xl">&times;</button></div>
-            <div className="whitespace-pre-wrap font-serif text-xl italic mb-10">{selected.content}</div>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className={`w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[40px] shadow-2xl p-8 md:p-12 relative ${isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}`}>
+            <button onClick={() => setSelected(null)} className="absolute top-8 right-8 w-10 h-10 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-500 hover:bg-zinc-200 transition-colors">
+              <i className="fas fa-times"></i>
+            </button>
+            <h2 className="text-3xl font-black mb-2">{selected.title}</h2>
+            <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest mb-8">{selected.level}</p>
+            
+            <div className={`p-8 rounded-3xl mb-8 font-medium leading-relaxed text-lg ${isDark ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
+              <div className="whitespace-pre-wrap">{selected.content}</div>
+            </div>
+
             {selected.videoData && (
-              <video controls className="w-full rounded-2xl mb-4 max-h-64 object-cover" src={selected.videoData}>
-                Shfletuesi juaj nuk e mbështet videon.
-              </video>
+              <div className="mb-8 rounded-3xl overflow-hidden shadow-2xl border border-zinc-200">
+                <video src={selected.videoData} controls className="w-full" />
+              </div>
             )}
-            {selected.audioData && <audio controls className="w-full mb-4" src={selected.audioData} />}
-            <button onClick={() => setSelected(null)} className="w-full py-4 bg-black text-white rounded-2xl font-bold">Mbyll</button>
+
+            {selected.audioData && (
+              <div className={`p-6 rounded-3xl flex items-center gap-4 ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
+                <div className="w-12 h-12 rounded-full bg-black flex items-center justify-center text-white">
+                  <i className="fas fa-play"></i>
+                </div>
+                <audio src={selected.audioData} controls className="flex-1" />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -595,50 +487,53 @@ const DialoguesView: React.FC<{ dialogues: Dialogue[], level: Proficiency, isDar
   );
 };
 
-// Fixed GamesView component implementation
-const GamesView: React.FC<{ onWin: (pts: number) => void, level: Proficiency, isDark?: boolean }> = ({ onWin, level, isDark }) => {
+const GamesView: React.FC<{ onWin: (pts: number) => void; level: Proficiency; isDark: boolean }> = ({ onWin, level, isDark }) => {
   const [activeGame, setActiveGame] = useState<string | null>(null);
 
   const games = [
-    { id: 'wordle', name: 'Wordle', icon: 'font', color: 'text-indigo-600', component: Wordle },
-    { id: 'hangman', name: 'Hangman', icon: 'skull-crossbones', color: 'text-red-600', component: Hangman },
-    { id: 'scramble', name: 'Scramble', icon: 'shuffle', color: 'text-orange-500', component: WordScramble },
-    { id: 'memory', name: 'Memory', icon: 'clone', color: 'text-purple-600', component: MemoryMatch },
-    { id: 'builder', name: 'Builder', icon: 'align-left', color: 'text-green-600', component: SentenceBuilder },
+    { id: 'wordle', name: 'Wordle', icon: 'font', color: 'bg-emerald-500', desc: 'Gjej fjalën e fshehur me 5 shkronja.' },
+    { id: 'hangman', name: 'Hangman', icon: 'skull-crossbones', color: 'bg-red-500', desc: 'Shpëto personazhin duke gjetur shkronjat.' },
+    { id: 'sentence', name: 'Sentence Builder', icon: 'align-left', color: 'bg-blue-500', desc: 'Ndërto fjali të sakta gramatikore.' },
+    { id: 'scramble', name: 'Word Scramble', icon: 'random', color: 'bg-orange-500', desc: 'Rregullo shkronjat e përziera.' },
+    { id: 'memory', name: 'Memory Match', icon: 'th-large', color: 'bg-purple-500', desc: 'Gjej çiftet e fjalëve dhe përkthimet.' },
   ];
 
   if (activeGame) {
-    const game = games.find(g => g.id === activeGame);
-    if (!game) return null;
-    const GameComp = game.component;
     return (
-      <div className="space-y-6">
-        <button 
-          onClick={() => setActiveGame(null)} 
-          className={`flex items-center gap-2 text-sm font-bold opacity-70 hover:opacity-100 transition-all ${isDark ? 'text-white' : 'text-black'}`}
-        >
-          <i className="fas fa-arrow-left"></i> Kthehu te lojërat
+      <div className="animate-in zoom-in-95 duration-500">
+        <button onClick={() => setActiveGame(null)} className="mb-8 flex items-center gap-2 font-bold text-zinc-400 hover:text-black transition-colors">
+          <i className="fas fa-arrow-left"></i> Kthehu te Lojërat
         </button>
-        <GameComp onWin={onWin} level={level} />
+        {activeGame === 'wordle' && <Wordle onWin={() => onWin(20)} isDark={isDark} />}
+        {activeGame === 'hangman' && <Hangman onWin={() => onWin(15)} isDark={isDark} />}
+        {activeGame === 'sentence' && <SentenceBuilder onWin={() => onWin(25)} isDark={isDark} />}
+        {activeGame === 'scramble' && <WordScramble onWin={() => onWin(10)} isDark={isDark} />}
+        {activeGame === 'memory' && <MemoryMatch onWin={() => onWin(30)} isDark={isDark} />}
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
-      <h2 className="text-3xl font-black">Lojëra</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <div className="space-y-8 animate-in fade-in duration-700">
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-black mb-3 tracking-tight">Mëso duke Luajtur</h1>
+        <p className="text-zinc-500 font-medium">Fitoni pikë (XP) duke përfunduar sfidat e mëposhtme.</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {games.map(g => (
-          <button
-            key={g.id}
+          <button 
+            key={g.id} 
             onClick={() => setActiveGame(g.id)}
-            className={`p-8 rounded-[2.5rem] border text-left transition-all hover:scale-[1.02] shadow-sm hover:shadow-xl ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-black/5'}`}
+            className={`p-8 rounded-[32px] text-left border transition-all hover:scale-[1.02] active:scale-[0.98] shadow-xl hover:shadow-2xl flex gap-6 items-start ${isDark ? 'bg-zinc-900 border-zinc-800 hover:bg-zinc-800' : 'bg-white border-white hover:border-zinc-100'}`}
           >
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-4 ${isDark ? 'bg-zinc-800' : 'bg-zinc-50'} ${g.color}`}>
-              <i className={`fas fa-${g.icon} text-xl`}></i>
+            <div className={`w-16 h-16 rounded-2xl ${g.color} flex items-center justify-center text-white text-2xl shadow-lg`}>
+              <i className={`fas fa-${g.icon}`}></i>
             </div>
-            <h3 className="text-xl font-black mb-1">{g.name}</h3>
-            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Luaj tani</p>
+            <div className="flex-1">
+              <h3 className="font-bold text-xl mb-2">{g.name}</h3>
+              <p className="text-sm text-zinc-500 leading-relaxed">{g.desc}</p>
+            </div>
           </button>
         ))}
       </div>
@@ -646,136 +541,265 @@ const GamesView: React.FC<{ onWin: (pts: number) => void, level: Proficiency, is
   );
 };
 
-const LeaderboardView: React.FC<{ users: User[], isDark?: boolean }> = ({ users, isDark }) => (
-  <div className="space-y-8">
-    <h2 className="text-3xl font-black">Renditja</h2>
-    {users.filter(u => u.points > 0).sort((a,b) => b.points - a.points).map((u, i) => (
-      <div key={u.id} className={`flex items-center justify-between p-6 rounded-3xl border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white shadow-sm'}`}>
-        <div className="flex items-center gap-4"><span className="font-black text-gray-400"># {i+1}</span><span className="font-bold">{u.name} {u.isAdmin && "🛡️"}</span></div>
-        <div className="font-black">{u.points} XP</div>
+const LeaderboardView: React.FC<{ users: User[]; isDark: boolean }> = ({ users, isDark }) => {
+  const sorted = [...users].sort((a, b) => (b.points || 0) - (a.points || 0));
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-700">
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-black mb-3 tracking-tight">Renditja</h1>
+        <p className="text-zinc-500 font-medium">Kush janë studentët më aktivë të kësaj jave?</p>
       </div>
-    ))}
-    {users.filter(u => u.points > 0).length === 0 && (
-      <p className="text-gray-500 italic">Ende nuk ka asnjë student me pikë në renditje.</p>
-    )}
-  </div>
-);
 
-const StreakView: React.FC<{ user: User, isDark?: boolean }> = ({ user, isDark }) => (
-  <div className="flex flex-col items-center py-20">
-    <div className="text-8xl text-orange-500 mb-6"><i className="fas fa-fire animate-bounce"></i></div>
-    <h2 className="text-6xl font-black">{user.streak} Ditë</h2>
-    <p className="text-gray-500 text-xl font-bold mt-4">Vazhdimësia jote!</p>
-  </div>
-);
-
-const SettingsView: React.FC<{ currentTheme: ThemeColor, onThemeChange: (t: ThemeColor) => void, isDark?: boolean }> = ({ currentTheme, onThemeChange, isDark }) => (
-  <div className="space-y-10">
-    <h2 className="text-3xl font-black">Cilësimet</h2>
-    <div className={`p-8 rounded-[2.5rem] border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white shadow-xl'}`}>
-      <h3 className="font-black text-sm uppercase tracking-widest mb-6">Ngjyra e Platformës</h3>
-      <div className="grid grid-cols-3 sm:grid-cols-4 gap-4">
-        {[
-          { id: 'default', color: 'bg-white' }, { id: 'black', color: 'bg-black' }, { id: 'blue', color: 'bg-blue-400' },
-          { id: 'red', color: 'bg-red-400' }, { id: 'cyan', color: 'bg-cyan-400' }, { id: 'purple', color: 'bg-purple-400' },
-          { id: 'orange', color: 'bg-orange-400' }, { id: 'green', color: 'bg-green-400' }, { id: 'pink', color: 'bg-pink-400' },
-          { id: 'emerald', color: 'bg-emerald-400' }, { id: 'amber', color: 'bg-amber-400' }, { id: 'rose', color: 'bg-rose-400' }
-        ].map(t => (
-          <button key={t.id} onClick={() => onThemeChange(t.id as ThemeColor)} className={`h-16 rounded-2xl border-2 ${t.color} ${currentTheme === t.id ? 'ring-4 ring-black/10' : 'border-black/5'}`} />
+      <div className={`rounded-[32px] shadow-2xl border overflow-hidden ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+        {sorted.map((u, i) => (
+          <div key={u.id} className={`flex items-center gap-4 p-6 border-b last:border-0 transition-colors ${isDark ? 'border-zinc-800 hover:bg-zinc-800/50' : 'border-zinc-100 hover:bg-zinc-50'}`}>
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-lg ${i === 0 ? 'bg-yellow-400 text-white' : i === 1 ? 'bg-zinc-300 text-white' : i === 2 ? 'bg-orange-400 text-white' : 'text-zinc-400'}`}>
+              {i + 1}
+            </div>
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-zinc-100 to-zinc-200 flex items-center justify-center font-bold text-zinc-500 shadow-inner">
+              {u.name[0]}
+            </div>
+            <div className="flex-1">
+              <p className="font-bold text-lg">{u.name}</p>
+              <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">{u.streak || 0} DITË STREAK</p>
+            </div>
+            <div className="text-right">
+              <p className="font-black text-xl text-indigo-600">{u.points || 0}</p>
+              <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">XP TOTALE</p>
+            </div>
+          </div>
         ))}
       </div>
-    </div>
-  </div>
-);
-
-const SuggestionsView: React.FC<{ suggestions: Suggestion[], onAdd: (t: string) => void, isDark?: boolean }> = ({ suggestions, onAdd, isDark }) => {
-  const [text, setText] = useState('');
-  return (
-    <div className="space-y-10">
-      <h2 className="text-3xl font-black">Sugjerime</h2>
-      <div className="flex gap-2"><input className={`flex-1 p-4 rounded-2xl outline-none ${isDark ? 'bg-zinc-900' : 'bg-gray-100'}`} placeholder="Ideja jote..." value={text} onChange={e => setText(e.target.value)} /><button onClick={() => { onAdd(text); setText(''); }} className="bg-black text-white px-6 rounded-2xl">Dërgo</button></div>
-      {suggestions.map(s => (
-        <div key={s.id} className={`p-6 rounded-3xl border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white shadow-sm'}`}>
-          <div className="font-bold mb-2">{s.userName} <span className="text-gray-400 text-[10px] ml-2">{s.date}</span></div>
-          <p>{s.text}</p>
-          {s.adminResponse && <div className="mt-4 p-4 rounded-2xl bg-indigo-50 border-l-4 border-indigo-600 text-sm italic">Përgjigjja: {s.adminResponse}</div>}
-        </div>
-      ))}
     </div>
   );
 };
 
-const ChildrensCornerView: React.FC<{ animations: AnimationMedia[], isDark?: boolean }> = ({ animations, isDark }) => {
-  const [selected, setSelected] = useState<AnimationMedia | null>(null);
+const ChatView: React.FC<{ level: Proficiency; isDark: boolean; embedded?: boolean }> = ({ level, isDark, embedded }) => {
+  const [messages, setMessages] = useState<{role: string, text: string}[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages]);
+
+  const handleSend = async () => {
+    if (!input.trim() || loading) return;
+    const userMsg = input;
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setLoading(true);
+    
+    const aiMsg = await chatWithAI(userMsg, level, messages);
+    setMessages(prev => [...prev, { role: 'model', text: aiMsg }]);
+    setLoading(false);
+  };
+
   return (
-    <div className="space-y-6">
-      <h2 className="text-3xl font-black">Këndi i Fëmijëve</h2>
-      {animations.length === 0 ? (
-        <p className="text-gray-500">Nuk ka ende animacione.</p>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {animations.map(a => (
-            <button key={a.id} onClick={() => setSelected(a)} className={`p-6 rounded-3xl border text-left flex flex-col justify-between items-start ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white shadow-md'}`}>
-              <span className="font-bold text-lg mb-4">{a.title}</span>
-              <div className="w-full h-40 bg-gray-200 rounded-xl flex items-center justify-center overflow-hidden relative">
-                {a.videoData ? (
-                  <>
-                    <video src={a.videoData} className="w-full h-full object-cover opacity-60" />
-                    <i className="fas fa-play-circle text-5xl text-white absolute drop-shadow-md"></i>
-                  </>
-                ) : (
-                  <i className="fas fa-film text-4xl text-gray-400"></i>
-                )}
-              </div>
-            </button>
-          ))}
+    <div className={`flex flex-col h-full ${embedded ? '' : 'animate-in fade-in duration-700'}`}>
+      {!embedded && (
+        <div className="mb-8">
+          <h1 className="text-3xl font-black tracking-tight">Bisedo me AI</h1>
+          <p className="text-zinc-500 font-medium">Praktikoni anglishten me asistentin tuaj personal.</p>
         </div>
       )}
-      {selected && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
-          <div className={`w-full max-w-3xl p-6 rounded-[2rem] ${isDark ? 'bg-zinc-900' : 'bg-white'}`}>
-            <div className="flex justify-between items-start mb-4">
-              <h3 className="text-2xl font-black">{selected.title}</h3>
-              <button onClick={() => setSelected(null)} className="text-2xl">&times;</button>
+
+      <div className={`flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar ${isDark ? 'bg-zinc-900/30' : 'bg-zinc-50/50'} rounded-[32px] border ${isDark ? 'border-zinc-800' : 'border-zinc-200'}`} ref={scrollRef}>
+        {messages.length === 0 && (
+          <div className="h-full flex flex-col items-center justify-center text-center p-10">
+            <div className="w-20 h-20 rounded-[32px] bg-black flex items-center justify-center text-white text-3xl mb-6 shadow-2xl">
+              <i className="fas fa-robot"></i>
             </div>
-            <video controls autoPlay className="w-full rounded-xl mb-4 max-h-[60vh] bg-black" src={selected.videoData}>
-              Shfletuesi juaj nuk e mbështet videon.
-            </video>
-            <button onClick={() => setSelected(null)} className="w-full py-3 bg-black text-white rounded-xl font-bold">Mbyll</button>
+            <h3 className="font-bold text-xl mb-2">Përshëndetje!</h3>
+            <p className="text-zinc-500 max-w-xs">Unë jam asistenti juaj i anglishtes. Mund të bisedojmë për çdo gjë që dëshironi.</p>
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300`}>
+            <div className={`max-w-[85%] p-5 rounded-[24px] shadow-sm font-medium leading-relaxed ${m.role === 'user' ? 'bg-black text-white rounded-tr-none' : (isDark ? 'bg-zinc-800 text-white rounded-tl-none' : 'bg-white text-black rounded-tl-none border border-zinc-100')}`}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex justify-start animate-pulse">
+            <div className={`p-5 rounded-[24px] rounded-tl-none ${isDark ? 'bg-zinc-800' : 'bg-white border border-zinc-100'}`}>
+              <div className="flex gap-1">
+                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:0.4s]"></div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-6 flex gap-3">
+        <input 
+          className={`flex-1 p-5 rounded-2xl outline-none font-medium shadow-lg transition-all ${isDark ? 'bg-zinc-800 text-white placeholder-zinc-600 focus:bg-zinc-700' : 'bg-white text-black placeholder-zinc-400 focus:bg-zinc-50 border border-zinc-200'}`}
+          placeholder="Shkruaj mesazhin..."
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyPress={e => e.key === 'Enter' && handleSend()}
+        />
+        <button 
+          onClick={handleSend}
+          className="w-16 h-16 bg-black text-white rounded-2xl flex items-center justify-center shadow-xl hover:bg-zinc-800 active:scale-95 transition-all"
+        >
+          <i className="fas fa-paper-plane"></i>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const StreakView: React.FC<{ user: User; isDark: boolean }> = ({ user, isDark }) => {
+  return (
+    <div className="space-y-10 animate-in fade-in duration-700 text-center py-10">
+      <div className="relative inline-block">
+        <div className="w-48 h-48 rounded-[48px] bg-gradient-to-br from-orange-400 to-red-600 flex items-center justify-center text-white text-7xl shadow-2xl animate-bounce duration-[2000ms]">
+          <i className="fas fa-fire"></i>
+        </div>
+        <div className="absolute -top-4 -right-4 w-16 h-16 rounded-full bg-black text-white flex items-center justify-center font-black text-2xl border-4 border-white shadow-xl">
+          {user.streak || 0}
+        </div>
+      </div>
+
+      <div>
+        <h1 className="text-5xl font-black mb-4 tracking-tight">{user.streak || 0} Ditë Streak!</h1>
+        <p className="text-xl text-zinc-500 font-medium max-w-md mx-auto leading-relaxed">Vazhdoni punën e shkëlqyer! Mos e lini zjarrin të fiket.</p>
+      </div>
+
+      <div className="grid grid-cols-7 gap-3 max-w-md mx-auto pt-10">
+        {['H', 'M', 'M', 'E', 'P', 'S', 'D'].map((d, i) => (
+          <div key={i} className="space-y-3">
+            <div className={`w-full aspect-square rounded-2xl flex items-center justify-center text-xl shadow-inner ${i < (user.streak || 0) % 7 ? 'bg-orange-500 text-white' : (isDark ? 'bg-zinc-800 text-zinc-600' : 'bg-zinc-100 text-zinc-300')}`}>
+              <i className="fas fa-check-circle"></i>
+            </div>
+            <p className="text-[10px] font-black text-zinc-400">{d}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const SuggestionsView: React.FC<{ suggestions: Suggestion[]; onAdd: (text: string) => void; isDark: boolean }> = ({ suggestions, onAdd, isDark }) => {
+  const [text, setText] = useState('');
+
+  const handleSubmit = () => {
+    if (!text.trim()) return;
+    onAdd(text);
+    setText('');
+    alert("Sugjerimi u dërgua me sukses!");
+  };
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-700">
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-black mb-3 tracking-tight">Sugjerimet Tuaja</h1>
+        <p className="text-zinc-500 font-medium">Na ndihmoni të përmirësojmë AngliBot AI.</p>
+      </div>
+
+      <div className={`p-8 rounded-[32px] shadow-xl border transition-all ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+        <textarea 
+          className={`w-full h-32 p-6 rounded-2xl outline-none font-medium resize-none transition-all ${isDark ? 'bg-zinc-800/50 text-white placeholder-zinc-600 focus:bg-zinc-800' : 'bg-zinc-50 text-black placeholder-zinc-400 focus:bg-zinc-100'}`}
+          placeholder="Shkruani sugjerimin tuaj këtu..."
+          value={text}
+          onChange={e => setText(e.target.value)}
+        />
+        <button 
+          onClick={handleSubmit}
+          className="w-full mt-6 py-5 bg-black text-white rounded-2xl font-bold shadow-xl active:scale-[0.98] transition-all"
+        >
+          Dërgo Sugjerimin
+        </button>
+      </div>
+
+      <div className="space-y-4 pt-10">
+        <h3 className="font-bold text-xl mb-6">Sugjerimet e Fundit</h3>
+        {suggestions.slice().reverse().map(s => (
+          <div key={s.id} className={`p-6 rounded-[28px] border shadow-sm ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-100'}`}>
+            <div className="flex justify-between items-start mb-3">
+              <p className="font-bold">{s.userName}</p>
+              <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{s.date}</p>
+            </div>
+            <p className="text-zinc-500 font-medium mb-4">{s.text}</p>
+            {s.adminResponse && (
+              <div className={`p-4 rounded-2xl border-l-4 border-indigo-500 ${isDark ? 'bg-zinc-800' : 'bg-indigo-50'}`}>
+                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1">Përgjigjja e Adminit</p>
+                <p className="text-sm font-medium">{s.adminResponse}</p>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const SettingsView: React.FC<{ currentTheme: ThemeColor; onThemeChange: (t: ThemeColor) => void; isDark: boolean }> = ({ currentTheme, onThemeChange, isDark }) => {
+  return (
+    <div className="space-y-8 animate-in fade-in duration-700">
+      <h1 className="text-3xl font-black tracking-tight mb-10">Cilësimet</h1>
+
+      <div className={`p-8 rounded-[32px] shadow-xl border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+        <h3 className="font-bold text-lg mb-6 flex items-center gap-3">
+          <i className="fas fa-palette text-indigo-500"></i> Tema e Aplikacionit
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <button onClick={() => onThemeChange('default')} className={`p-5 rounded-2xl border-2 font-bold transition-all ${currentTheme === 'default' ? 'border-black bg-black text-white' : 'border-zinc-100 hover:border-zinc-200'}`}>Sistemi</button>
+          <button onClick={() => onThemeChange('light')} className={`p-5 rounded-2xl border-2 font-bold transition-all ${currentTheme === 'light' ? 'border-black bg-black text-white' : 'border-zinc-100 hover:border-zinc-200'}`}>Dritë</button>
+          <button onClick={() => onThemeChange('dark')} className={`p-5 rounded-2xl border-2 font-bold transition-all ${currentTheme === 'dark' ? 'border-black bg-black text-white' : 'border-zinc-100 hover:border-zinc-200'}`}>Errët</button>
+        </div>
+      </div>
+
+      <div className={`p-8 rounded-[32px] shadow-xl border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+        <h3 className="font-bold text-lg mb-6 flex items-center gap-3">
+          <i className="fas fa-info-circle text-indigo-500"></i> Rreth AngliBot AI
+        </h3>
+        <p className="text-zinc-500 font-medium leading-relaxed">AngliBot AI është një platformë edukative e krijuar për të ndihmuar studentët shqiptarë të mësojnë anglisht përmes teknologjisë më të fundit të Inteligjencës Artificiale.</p>
+        <div className="mt-6 pt-6 border-t border-zinc-100 flex justify-between items-center">
+          <span className="text-xs font-bold text-zinc-400">Versioni 2.0.0 (Full-Stack)</span>
+          <div className="flex gap-4">
+            <i className="fab fa-instagram text-zinc-400 hover:text-black cursor-pointer"></i>
+            <i className="fab fa-facebook text-zinc-400 hover:text-black cursor-pointer"></i>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };
 
 const AdminView: React.FC<{ 
-  users: User[], 
-  suggestions: Suggestion[], 
-  loginLogs: LoginEvent[], 
-  dialogues: Dialogue[], 
-  animations: AnimationMedia[], 
-  onDialogueAdd: (d: Dialogue) => Promise<void>, 
-  onDialogueRemove: (id: string) => Promise<void>, 
-  onClearDialogues: () => Promise<void>,
-  onAnimationAdd: (a: AnimationMedia) => Promise<void>, 
-  onAnimationRemove: (id: string) => Promise<void>, 
-  onMakeAdmin: (id: string, p?: string) => void, 
-  onRespondSuggestion: (id: string, msg: string) => void, 
-  onClearLogs: () => void, 
-  onDeleteUser: (id: string) => Promise<void>, 
-  onClearScoreboard: () => Promise<void>, 
-  onResetUserScore: (id: string) => Promise<void>, 
-  isDark?: boolean 
+  users: User[]; 
+  suggestions: Suggestion[]; 
+  loginLogs: LoginEvent[]; 
+  dialogues: Dialogue[]; 
+  animations: AnimationMedia[];
+  onDialogueAdd: (d: Dialogue) => Promise<void>; 
+  onDialogueRemove: (id: string) => Promise<void>; 
+  onClearDialogues: () => Promise<void>;
+  onAnimationAdd: (a: AnimationMedia) => Promise<void>; 
+  onAnimationRemove: (id: string) => Promise<void>; 
+  onMakeAdmin: (id: string) => Promise<void>; 
+  onRespondSuggestion: (id: string, msg: string) => Promise<void>; 
+  onClearLogs: () => Promise<void>; 
+  onDeleteUser: (id: string) => Promise<void>; 
+  onClearScoreboard: () => Promise<void>; 
+  onResetUserScore: (id: string) => Promise<void>; 
+  isDark: boolean 
 }> = ({ 
   users, 
   suggestions, 
   loginLogs, 
   dialogues, 
-  animations, 
+  animations,
   onDialogueAdd, 
   onDialogueRemove, 
-  onClearDialogues,
+  onClearDialogues, 
   onAnimationAdd, 
   onAnimationRemove, 
   onMakeAdmin, 
@@ -796,49 +820,18 @@ const AdminView: React.FC<{
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
-  const uploadFile = async (file: File, path: string): Promise<string> => {
-    // Metoda 1: Provo Firebase Storage (nëse është aktivizuar)
-    try {
-      if (storage && storage.app.options.storageBucket && !storage.app.options.storageBucket.includes('TODO')) {
-        const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
-        const uploadTask = uploadBytesResumable(storageRef, file);
-        
-        return new Promise((resolve, reject) => {
-          uploadTask.on('state_changed', 
-            (snapshot) => {
-              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-              setUploadProgress(Math.round(progress));
-            }, 
-            (error) => {
-              console.warn("Firebase Storage failed or not ready, falling back to Base64:", error);
-              reject(error);
-            }, 
-            async () => {
-              const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-              resolve(downloadURL);
-            }
-          );
-        });
-      } else {
-        throw new Error("Storage not configured");
-      }
-    } catch (e) {
-      // Metoda 2: Alternativa Falas (Base64) - Funksionon pa asnjë setup
-      // Kufizimi: Firestore ka limit 1MB për dokument, kështu që skedari duhet të jetë i vogël
-      if (file.size < 800 * 1024) { // 800KB limit për siguri
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            setUploadProgress(100);
-            resolve(reader.result as string);
-          };
-          reader.onerror = () => reject(new Error("Dështoi konvertimi i skedarit."));
-          reader.readAsDataURL(file);
-        });
-      } else {
-        throw new Error("Skedari është shumë i madh (>800KB). Për video të mëdha, ju lutem aktivizoni Firebase Storage ose përdorni një URL të jashtme (p.sh. nga Streamable ose Cloudinary).");
-      }
-    }
+  const uploadFile = async (file: File): Promise<string> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!res.ok) throw new Error("Upload failed");
+    const data = await res.json();
+    return data.url;
   };
 
   const handlePublishDialogue = async () => {
@@ -848,12 +841,8 @@ const AdminView: React.FC<{
       let finalAudioData = newD.audioData;
       let finalVideoData = newD.videoData;
 
-      if (audioFile) {
-        finalAudioData = await uploadFile(audioFile, 'dialogues/audio');
-      }
-      if (videoFile) {
-        finalVideoData = await uploadFile(videoFile, 'dialogues/video');
-      }
+      if (audioFile) finalAudioData = await uploadFile(audioFile);
+      if (videoFile) finalVideoData = await uploadFile(videoFile);
 
       await onDialogueAdd({ 
         id: Date.now().toString(), 
@@ -869,7 +858,7 @@ const AdminView: React.FC<{
       alert("U publikua me sukses!");
     } catch (error: any) {
       console.error("Error uploading files:", error);
-      alert(`Gabim gjatë ngarkimit: ${error.message || 'Sigurohuni që Firebase Storage është aktivizuar dhe rregullat lejojnë ngarkimin.'}`);
+      alert(`Gabim gjatë ngarkimit: ${error.message}`);
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -881,10 +870,7 @@ const AdminView: React.FC<{
     setUploadProgress(0);
     try {
       let finalVideoData = newAnim.videoData;
-
-      if (animVideoFile) {
-        finalVideoData = await uploadFile(animVideoFile, 'animations/video');
-      }
+      if (animVideoFile) finalVideoData = await uploadFile(animVideoFile);
 
       await onAnimationAdd({ 
         id: Date.now().toString(), 
@@ -898,7 +884,7 @@ const AdminView: React.FC<{
       alert("Animacioni u publikua me sukses!");
     } catch (error: any) {
       console.error("Error uploading files:", error);
-      alert(`Gabim gjatë ngarkimit: ${error.message || 'Sigurohuni që Firebase Storage është aktivizuar dhe rregullat lejojnë ngarkimin.'}`);
+      alert(`Gabim gjatë ngarkimit: ${error.message}`);
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -940,16 +926,12 @@ const AdminView: React.FC<{
               <button onClick={() => { if(window.confirm(`Jeni i sigurt që doni të fshini pikët e ${u.name}?`)) onResetUserScore(u.id); }} className="bg-red-500 text-white px-4 py-2 rounded-xl text-xs font-bold">Pastro Pikët</button>
             </div>
           ))}
-          {users.filter(u => u.points > 0).length === 0 && (
-            <p className="text-gray-500 italic text-sm">Renditja është e zbrazët.</p>
-          )}
         </div>
       )}
       {tab === 'dialogues' && (
         <div className="space-y-6">
           <div className="space-y-4 border-b pb-6">
             <h3 className="font-bold text-lg">Shto Dialog të Ri</h3>
-            <p className="text-[10px] text-indigo-600 font-bold uppercase tracking-widest">Skedarët ngarkohen në Firebase Storage</p>
             <input className="w-full p-4 border rounded-2xl outline-none" placeholder="Titulli" value={newD.title} onChange={e => setNewD({...newD, title: e.target.value})} />
             <select className="w-full p-4 border rounded-2xl outline-none" value={newD.level} onChange={e => setNewD({...newD, level: e.target.value as Proficiency})}>
               <option value="Beginner">Beginner</option>
@@ -958,43 +940,19 @@ const AdminView: React.FC<{
             </select>
             <textarea className="w-full h-40 p-4 border rounded-2xl outline-none" placeholder="Teksti i bisedës" value={newD.content} onChange={e => setNewD({...newD, content: e.target.value})} />
             <div>
-              <label className="block text-xs font-bold mb-1">Audio (Opsionale, Ngarko Skedar)</label>
-              <input type="file" accept="audio/*" onChange={e => {
-                const f = e.target.files?.[0]; 
-                if (f) { 
-                  setAudioFile(f);
-                  setNewD({...newD, audioData: ''}); // Clear URL if file selected
-                } else {
-                  setAudioFile(null);
-                }
-              }} />
-            </div>
-            <div>
-              <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Audios (p.sh. https://.../audio.mp3)</label>
-              <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e audios" value={newD.audioData.startsWith('http') ? newD.audioData : ''} onChange={e => { setNewD({...newD, audioData: e.target.value}); setAudioFile(null); }} />
+              <label className="block text-xs font-bold mb-1">Audio (Ngarko Skedar)</label>
+              <input type="file" accept="audio/*" onChange={e => setAudioFile(e.target.files?.[0] || null)} />
             </div>
             <div>
               <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar)</label>
-              <input type="file" accept="video/mp4,video/*" onChange={e => {
-                const f = e.target.files?.[0]; 
-                if (f) { 
-                  setVideoFile(f);
-                  setNewD({...newD, videoData: ''}); // Clear URL if file selected
-                } else {
-                  setVideoFile(null);
-                }
-              }} />
-            </div>
-            <div>
-              <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Videos (p.sh. https://.../video.mp4)</label>
-              <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newD.videoData.startsWith('http') ? newD.videoData : ''} onChange={e => { setNewD({...newD, videoData: e.target.value}); setVideoFile(null); }} />
+              <input type="file" accept="video/mp4,video/*" onChange={e => setVideoFile(e.target.files?.[0] || null)} />
             </div>
             <button 
               onClick={handlePublishDialogue} 
               disabled={isUploading}
               className={`w-full py-4 text-white rounded-2xl font-bold transition-all ${isUploading ? 'bg-gray-400 cursor-not-allowed' : 'bg-black active:scale-95'}`}
             >
-              {isUploading ? `Duke ngarkuar... ${uploadProgress}%` : 'Publiko Dialogun'}
+              {isUploading ? `Duke ngarkuar...` : 'Publiko Dialogun'}
             </button>
           </div>
           <div>
@@ -1023,26 +981,14 @@ const AdminView: React.FC<{
             <input className="w-full p-4 border rounded-2xl outline-none" placeholder="Titulli i Animacionit" value={newAnim.title} onChange={e => setNewAnim({...newAnim, title: e.target.value})} />
             <div>
               <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar)</label>
-              <input type="file" accept="video/mp4,video/*" onChange={e => {
-                const f = e.target.files?.[0]; 
-                if (f) { 
-                  setAnimVideoFile(f);
-                  setNewAnim({...newAnim, videoData: ''}); // Clear URL if file selected
-                } else {
-                  setAnimVideoFile(null);
-                }
-              }} />
-            </div>
-            <div>
-              <label className="block text-xs font-bold mb-1">Ose vendosni URL-në e Videos</label>
-              <input className="w-full p-4 border rounded-2xl outline-none text-sm" placeholder="URL e videos" value={newAnim.videoData.startsWith('http') ? newAnim.videoData : ''} onChange={e => { setNewAnim({...newAnim, videoData: e.target.value}); setAnimVideoFile(null); }} />
+              <input type="file" accept="video/mp4,video/*" onChange={e => setAnimVideoFile(e.target.files?.[0] || null)} />
             </div>
             <button 
               onClick={handlePublishAnimation} 
               disabled={isUploading}
               className={`w-full py-4 text-white rounded-2xl font-bold transition-all ${isUploading ? 'bg-gray-400 cursor-not-allowed' : 'bg-black active:scale-95'}`}
             >
-              {isUploading ? `Duke ngarkuar... ${uploadProgress}%` : 'Publiko Animacionin'}
+              {isUploading ? `Duke ngarkuar...` : 'Publiko Animacionin'}
             </button>
           </div>
           <div>
@@ -1072,71 +1018,6 @@ const AdminView: React.FC<{
           ))}
         </div>
       )}
-    </div>
-  );
-};
-
-const AIAssistant: React.FC<{ isOpen: boolean, onClose: () => void, level: Proficiency, isDark?: boolean }> = ({ isOpen, onClose, level, isDark }) => {
-  const [messages, setMessages] = useState<{ role: string, text: string }[]>([
-    { role: 'model', text: 'Përshëndetje! Unë jam asistenti juaj AI. Si mund t\'ju ndihmoj sot me Anglishten tuaj?' }
-  ]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const send = async () => {
-    if (!input.trim() || loading) return;
-    const userMsg = input;
-    setInput('');
-    const history = [...messages];
-    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
-    setLoading(true);
-    try {
-      const response = await chatWithAI(userMsg, level, history);
-      setMessages(prev => [...prev, { role: 'model', text: response }]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed bottom-6 right-6 w-[350px] h-[500px] flex flex-col rounded-[2rem] shadow-2xl border z-50 overflow-hidden animate-in slide-in-from-bottom-10 duration-300 bg-white border-black/10">
-      <div className="p-4 bg-black text-white flex justify-between items-center">
-        <div className="flex items-center gap-2">
-          <i className="fas fa-robot"></i>
-          <span className="font-bold text-sm">Ndihmësi AI</span>
-        </div>
-        <button onClick={onClose} className="hover:opacity-70">&times;</button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-        {messages.map((m, i) => (
-          <div key={i} className={`p-3 rounded-2xl text-sm ${m.role === 'user' ? 'bg-indigo-600 text-white ml-auto max-w-[85%]' : 'bg-gray-100 text-black mr-auto max-w-[85%]'}`}>
-            {m.text}
-          </div>
-        ))}
-        {loading && <div className="text-xs italic text-gray-400">Duke menduar...</div>}
-        <div ref={messagesEndRef} />
-      </div>
-      <div className="p-4 border-t flex gap-2">
-        <input 
-          className="flex-1 text-sm p-2 outline-none" 
-          placeholder="Pyet diçka..." 
-          value={input} 
-          onChange={e => setInput(e.target.value)} 
-          onKeyDown={e => e.key === 'Enter' && send()}
-        />
-        <button onClick={send} className="text-indigo-600 font-bold text-sm">Dërgo</button>
-      </div>
     </div>
   );
 };

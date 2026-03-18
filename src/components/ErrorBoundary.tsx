@@ -25,16 +25,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
-      let errorMessage = "Ka ndodhur një gabim i papritur.";
-      try {
-        if (this.state.error?.message) {
-          const parsed = JSON.parse(this.state.error.message);
-          if (parsed.error && parsed.error.includes('Missing or insufficient permissions')) {
-            errorMessage = "Nuk keni të drejta të mjaftueshme për të kryer këtë veprim.";
-          }
-        }
-      } catch (e) {
-        // Not a JSON error message, ignore
+      let errorMessage = this.state.error?.message || "Ka ndodhur një gabim i papritur.";
+      if (errorMessage.includes('Unauthorized')) {
+        errorMessage = "Nuk keni të drejta të mjaftueshme për të kryer këtë veprim.";
       }
 
       return (
