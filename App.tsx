@@ -797,6 +797,15 @@ const AdminView: React.FC<{
   const [uploadProgress, setUploadProgress] = useState(0);
 
   const uploadFile = async (file: File, path: string): Promise<string> => {
+    if (!storage) {
+      throw new Error("Shërbimi i Storage nuk është i inicializuar.");
+    }
+    
+    // Kontrollo madhësinë e skedarit (p.sh. max 50MB)
+    if (file.size > 50 * 1024 * 1024) {
+      throw new Error("Skedari është shumë i madh. Maksimumi është 50MB.");
+    }
+
     const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
     const uploadTask = uploadBytesResumable(storageRef, file);
     
@@ -807,11 +816,22 @@ const AdminView: React.FC<{
           setUploadProgress(Math.round(progress));
         }, 
         (error) => {
-          reject(error);
+          console.error("Firebase Storage Error:", error);
+          if (error.code === 'storage/unauthorized') {
+            reject(new Error("Nuk keni leje për të ngarkuar skedarë. Kontrolloni rregullat e Storage."));
+          } else if (error.code === 'storage/canceled') {
+            reject(new Error("Ngarkimi u anulua."));
+          } else {
+            reject(error);
+          }
         }, 
         async () => {
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-          resolve(downloadURL);
+          try {
+            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+            resolve(downloadURL);
+          } catch (e) {
+            reject(e);
+          }
         }
       );
     });
