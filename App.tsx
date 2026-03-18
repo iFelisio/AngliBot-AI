@@ -797,44 +797,48 @@ const AdminView: React.FC<{
   const [uploadProgress, setUploadProgress] = useState(0);
 
   const uploadFile = async (file: File, path: string): Promise<string> => {
-    if (!storage) {
-      throw new Error("Shërbimi i Storage nuk është i inicializuar.");
+    // Metoda 1: Provo Firebase Storage (nëse është aktivizuar)
+    try {
+      if (storage && storage.app.options.storageBucket && !storage.app.options.storageBucket.includes('TODO')) {
+        const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
+        const uploadTask = uploadBytesResumable(storageRef, file);
+        
+        return new Promise((resolve, reject) => {
+          uploadTask.on('state_changed', 
+            (snapshot) => {
+              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+              setUploadProgress(Math.round(progress));
+            }, 
+            (error) => {
+              console.warn("Firebase Storage failed or not ready, falling back to Base64:", error);
+              reject(error);
+            }, 
+            async () => {
+              const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+              resolve(downloadURL);
+            }
+          );
+        });
+      } else {
+        throw new Error("Storage not configured");
+      }
+    } catch (e) {
+      // Metoda 2: Alternativa Falas (Base64) - Funksionon pa asnjë setup
+      // Kufizimi: Firestore ka limit 1MB për dokument, kështu që skedari duhet të jetë i vogël
+      if (file.size < 800 * 1024) { // 800KB limit për siguri
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            setUploadProgress(100);
+            resolve(reader.result as string);
+          };
+          reader.onerror = () => reject(new Error("Dështoi konvertimi i skedarit."));
+          reader.readAsDataURL(file);
+        });
+      } else {
+        throw new Error("Skedari është shumë i madh (>800KB). Për video të mëdha, ju lutem aktivizoni Firebase Storage ose përdorni një URL të jashtme (p.sh. nga Streamable ose Cloudinary).");
+      }
     }
-    
-    // Kontrollo madhësinë e skedarit (p.sh. max 50MB)
-    if (file.size > 50 * 1024 * 1024) {
-      throw new Error("Skedari është shumë i madh. Maksimumi është 50MB.");
-    }
-
-    const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
-    const uploadTask = uploadBytesResumable(storageRef, file);
-    
-    return new Promise((resolve, reject) => {
-      uploadTask.on('state_changed', 
-        (snapshot) => {
-          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          setUploadProgress(Math.round(progress));
-        }, 
-        (error) => {
-          console.error("Firebase Storage Error:", error);
-          if (error.code === 'storage/unauthorized') {
-            reject(new Error("Nuk keni leje për të ngarkuar skedarë. Kontrolloni rregullat e Storage."));
-          } else if (error.code === 'storage/canceled') {
-            reject(new Error("Ngarkimi u anulua."));
-          } else {
-            reject(error);
-          }
-        }, 
-        async () => {
-          try {
-            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-            resolve(downloadURL);
-          } catch (e) {
-            reject(e);
-          }
-        }
-      );
-    });
   };
 
   const handlePublishDialogue = async () => {
