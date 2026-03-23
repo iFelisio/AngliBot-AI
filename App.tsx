@@ -49,6 +49,8 @@ const App: React.FC = () => {
   const socketRef = useRef<Socket | null>(null);
   const location = useLocation();
 
+  const [globalError, setGlobalError] = useState<string | null>(null);
+
   useEffect(() => {
     // Socket initialization
     socketRef.current = io();
@@ -80,8 +82,9 @@ const App: React.FC = () => {
         if (suggestionsRes.ok) setSuggestions(await suggestionsRes.json());
         if (logsRes.ok) setLoginLogs(await logsRes.json());
         if (configRes.ok) setConfigStatus(await configRes.json());
-      } catch (e) {
+      } catch (e: any) {
         console.error("Error fetching initial data", e);
+        setGlobalError(`Gabim në rrjet: ${e.message || 'Dështim i panjohur'}`);
       }
     };
 
@@ -111,9 +114,9 @@ const App: React.FC = () => {
         const err = await res.json();
         setLoginError(err.error || 'Dështoi hyrja');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Login error", e);
-      setLoginError('Gabim në rrjet');
+      setLoginError(`Gabim në rrjet: ${e.message || 'Dështim i panjohur'}`);
     }
   };
 
@@ -139,6 +142,26 @@ const App: React.FC = () => {
   const isDarkTheme = theme === 'dark' || (theme === 'default' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
   const isConfigured = configStatus && (configStatus.GEMINI_API_KEY && configStatus.SESSION_SECRET);
+
+  if (globalError) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-6 ${isDarkTheme ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-black'}`}>
+        <div className={`max-w-md w-full p-10 rounded-[32px] shadow-2xl border transition-all duration-500 ${isDarkTheme ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+          <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+            <i className="fas fa-exclamation-triangle text-2xl"></i>
+          </div>
+          <h1 className="text-2xl font-black mb-2 tracking-tight text-center">Ndjesë!</h1>
+          <p className="text-zinc-500 mb-8 text-sm font-medium leading-relaxed text-center">{globalError}</p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="w-full bg-black text-white py-5 rounded-2xl font-bold hover:bg-zinc-800 active:scale-[0.98] transition-all shadow-xl shadow-black/10 mt-4"
+          >
+            Rifresko Faqen
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (configStatus && !isConfigured) {
     return <SetupRequiredView configStatus={configStatus} isDark={isDarkTheme} />;
