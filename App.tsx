@@ -3,7 +3,6 @@ import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { ThemeColor, User, Dialogue, Suggestion, Proficiency, Goal, LoginEvent, AnimationMedia } from './types';
 import { translateText, chatWithAI, processContent } from './services/geminiService';
 import { Wordle, Hangman, SentenceBuilder, WordScramble, MemoryMatch } from './components/Games';
-import { io, Socket } from 'socket.io-client';
 
 // Custom Logo Component
 const AngliBotLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" }) => (
@@ -43,22 +42,11 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [configStatus, setConfigStatus] = useState<any>(null);
-  const socketRef = useRef<Socket | null>(null);
   const location = useLocation();
 
   const [globalError, setGlobalError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Socket initialization
-    socketRef.current = io();
-    const socket = socketRef.current;
-
-    socket.on('users:updated', (users: User[]) => setAllUsers(users));
-    socket.on('dialogues:updated', (d: Dialogue[]) => setDialogues(d));
-    socket.on('animations:updated', (a: AnimationMedia[]) => setAnimations(a));
-    socket.on('suggestions:updated', (s: Suggestion[]) => setSuggestions(s));
-    socket.on('logs:updated', (l: LoginEvent[]) => setLoginLogs(l));
-
     // Initial fetch
     const fetchData = async () => {
       try {
@@ -92,10 +80,6 @@ const App: React.FC = () => {
     };
 
     fetchData();
-
-    return () => {
-      socket.disconnect();
-    };
   }, []);
 
   const safeFetch = async (url: string, options?: RequestInit) => {
