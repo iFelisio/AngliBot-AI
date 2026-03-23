@@ -333,6 +333,11 @@ async function initialize() {
 
     // --- Vite / Static ---
 
+    // API 404
+    app.all('/api/*', (req, res) => {
+      res.status(404).json({ error: `API route ${req.method} ${req.url} not found` });
+    });
+
     if (process.env.NODE_ENV !== 'production') {
       const vite = await createViteServer({
         server: { middlewareMode: true },
@@ -375,7 +380,17 @@ initialize().catch(err => {
 });
 
 export default async (req: any, res: any) => {
-  await initialize();
-  // @ts-ignore
-  return app(req, res);
+  try {
+    await initialize();
+    if (typeof app === 'function') {
+      return app(req, res);
+    }
+    throw new Error('Server application not initialized');
+  } catch (err: any) {
+    console.error('Critical Server Error:', err);
+    res.status(500).json({ 
+      error: 'A critical server error occurred', 
+      details: err.message 
+    });
+  }
 };

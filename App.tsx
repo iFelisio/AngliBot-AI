@@ -65,23 +65,29 @@ const App: React.FC = () => {
     // Initial fetch
     const fetchData = async () => {
       try {
-        const [meRes, usersRes, dialoguesRes, animationsRes, suggestionsRes, logsRes, configRes] = await Promise.all([
-          fetch('/api/auth/me'),
-          fetch('/api/users'),
-          fetch('/api/dialogues'),
-          fetch('/api/animations'),
-          fetch('/api/suggestions'),
-          fetch('/api/logs'),
-          fetch('/api/config/status')
+        const [me, users, dialogues, animations, suggestions, logs, config] = await Promise.all([
+          safeFetch('/api/auth/me'),
+          safeFetch('/api/users'),
+          safeFetch('/api/dialogues'),
+          safeFetch('/api/animations'),
+          safeFetch('/api/suggestions'),
+          safeFetch('/api/logs'),
+          safeFetch('/api/config/status')
         ]);
 
-        if (meRes.ok) setCurrentUser(await meRes.json());
-        if (usersRes.ok) setAllUsers(await usersRes.json());
-        if (dialoguesRes.ok) setDialogues(await dialoguesRes.json());
-        if (animationsRes.ok) setAnimations(await animationsRes.json());
-        if (suggestionsRes.ok) setSuggestions(await suggestionsRes.json());
-        if (logsRes.ok) setLoginLogs(await logsRes.json());
-        if (configRes.ok) setConfigStatus(await configRes.json());
+        if (me.ok) setCurrentUser(me.data);
+        if (users.ok) setAllUsers(users.data);
+        if (dialogues.ok) setDialogues(dialogues.data);
+        if (animations.ok) setAnimations(animations.data);
+        if (suggestions.ok) setSuggestions(suggestions.data);
+        if (logs.ok) setLoginLogs(logs.data);
+        if (config.ok) setConfigStatus(config.data);
+        
+        // If any critical ones failed with non-auth errors
+        const criticalErrors = [me, config].filter(r => !r.ok && r.status !== 401);
+        if (criticalErrors.length > 0) {
+          setGlobalError(`Gabim në rrjet: ${criticalErrors[0].data.error || 'Dështim i panjohur'}`);
+        }
       } catch (e: any) {
         console.error("Error fetching initial data", e);
         setGlobalError(`Gabim në rrjet: ${e.message || 'Dështim i panjohur'}`);
@@ -95,24 +101,33 @@ const App: React.FC = () => {
     };
   }, []);
 
+  const safeFetch = async (url: string, options?: RequestInit) => {
+    const res = await fetch(url, options);
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      data = { error: text || res.statusText || 'Gabim i panjohur' };
+    }
+    return { ok: res.ok, status: res.status, data };
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     try {
-      const res = await fetch('/api/auth/login', {
+      const { ok, data } = await safeFetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
       });
       
-      if (res.ok) {
-        const user = await res.json();
-        setCurrentUser(user);
-        // Refresh data
+      if (ok) {
+        setCurrentUser(data);
         window.location.reload();
       } else {
-        const err = await res.json();
-        setLoginError(err.error || 'Dështoi hyrja');
+        setLoginError(data.error || 'Dështoi hyrja');
       }
     } catch (e: any) {
       console.error("Login error", e);
