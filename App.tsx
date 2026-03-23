@@ -46,41 +46,24 @@ const App: React.FC = () => {
 
   const [globalError, setGlobalError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // Initial fetch
-    const fetchData = async () => {
-      try {
-        const [me, users, dialogues, animations, suggestions, logs, config] = await Promise.all([
-          safeFetch('/api/auth/me'),
-          safeFetch('/api/users'),
-          safeFetch('/api/dialogues'),
-          safeFetch('/api/animations'),
-          safeFetch('/api/suggestions'),
-          safeFetch('/api/logs'),
-          safeFetch('/api/config/status')
-        ]);
+  const normalizeErrorMessage = (message?: string) => {
+    const fallback = 'Shërbimi është përkohësisht i padisponueshëm. Ju lutem provoni sërish pas pak.';
+    if (!message) return fallback;
 
-        if (me.ok) setCurrentUser(me.data);
-        if (users.ok) setAllUsers(users.data);
-        if (dialogues.ok) setDialogues(dialogues.data);
-        if (animations.ok) setAnimations(animations.data);
-        if (suggestions.ok) setSuggestions(suggestions.data);
-        if (logs.ok) setLoginLogs(logs.data);
-        if (config.ok) setConfigStatus(config.data);
-        
-        // If any critical ones failed with non-auth errors
-        const criticalErrors = [me, config].filter(r => !r.ok && r.status !== 401);
-        if (criticalErrors.length > 0) {
-          setGlobalError(`Gabim në rrjet: ${criticalErrors[0].data.error || 'Dështim i panjohur'}`);
-        }
-      } catch (e: any) {
-        console.error("Error fetching initial data", e);
-        setGlobalError(`Gabim në rrjet: ${e.message || 'Dështim i panjohur'}`);
-      }
-    };
+    if (message.includes('FUNCTION_INVOCATION_FAILED') || message.includes('A server error has occurred')) {
+      return 'Serveri u ndërpre gjatë përpunimit të kërkesës. Rifresko faqen ose provo sërish pas pak.';
+    }
 
-    fetchData();
-  }, []);
+    if (message.includes('Database temporarily unavailable') || message.includes('Database not connected')) {
+      return 'Lidhja me databazën dështoi në server. Kontrollo MONGODB_URI në Vercel dhe provo sërish.';
+    }
+
+    if (message.includes('<!doctype html') || message.includes('<html')) {
+      return fallback;
+    }
+
+    return message;
+  };
 
   const safeFetch = async (url: string, options?: RequestInit) => {
     const res = await fetch(url, options);
@@ -89,10 +72,49 @@ const App: React.FC = () => {
     try {
       data = JSON.parse(text);
     } catch (e) {
-      data = { error: text || res.statusText || 'Gabim i panjohur' };
+      data = { error: normalizeErrorMessage(text || res.statusText || 'Gabim i panjohur') };
     }
+
+    if (data?.error) {
+      data.error = normalizeErrorMessage(data.error);
+    }
+
     return { ok: res.ok, status: res.status, data };
   };
+
+  useEffect(() => {
+    // Initial fetch
+    const fetchData = async () => {
+      try {
+        const bootstrap = await safeFetch('/api/bootstrap');
+
+        if (bootstrap.ok) {
+          setCurrentUser(bootstrap.data.currentUser || null);
+          setAllUsers(bootstrap.data.users || []);
+          setDialogues(bootstrap.data.dialogues || []);
+          setAnimations(bootstrap.data.animations || []);
+          setSuggestions(bootstrap.data.suggestions || []);
+          setLoginLogs(bootstrap.data.logs || []);
+          setConfigStatus(bootstrap.data.config || null);
+          setGlobalError(null);
+          return;
+        }
+
+        if (bootstrap.data?.config) {
+          setConfigStatus(bootstrap.data.config);
+        }
+
+        if (bootstrap.status !== 401) {
+          setGlobalError(`Gabim në rrjet: ${bootstrap.data.error || 'Dështim i panjohur'}`);
+        }
+      } catch (e: any) {
+        console.error("Error fetching initial data", e);
+        setGlobalError(`Gabim në rrjet: ${normalizeErrorMessage(e.message || 'Dështim i panjohur')}`);
+      }
+    };
+
+    fetchData();
+  }, []);
 
   const addPoints = async (pts: number) => {
     if (!currentUser) return;
@@ -318,7 +340,7 @@ const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ c
           </div>
           <div>
             <h1 className="text-3xl font-black tracking-tight">Konfigurimi i Nevojshëm</h1>
-            <p className="text-zinc-500 font-medium">Ju lutem plotësoni variablat e mëposhtme në AI Studio.</p>
+            <p className="text-zinc-500 font-medium">Ju lutem plotësoni variablat e mëposhtme në AI Studio ose Vercel.</p>
           </div>
         </div>
 
@@ -334,6 +356,10 @@ const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ c
                   <p className="text-[10px] uppercase tracking-widest opacity-60 mt-0.5">
                     {key === 'SESSION_SECRET' && 'Një tekst i rastësishëm për sigurinë'}
                     {key === 'GEMINI_API_KEY' && 'Çelësi i AI nga Google AI Studio'}
+                    {key === 'CLOUDINARY_CLOUD_NAME' && 'Emri i cloud-it për storage të file-ve'}
+                    {key === 'CLOUDINARY_API_KEY' && 'API key për upload-et në Cloudinary'}
+                    {key === 'CLOUDINARY_API_SECRET' && 'API secret për upload-et në Cloudinary'}
+                    {key === 'MONGODB_URI' && 'Lidhja e databazës MongoDB Atlas'}
                   </p>
                 </div>
               </div>
@@ -880,9 +906,9 @@ const AdminView: React.FC<{
       method: 'POST',
       body: formData
     });
-    
-    if (!res.ok) throw new Error("Upload failed");
-    const data = await res.json();
+
+    const data = await res.json().catch(() => ({ error: 'Upload failed' }));
+    if (!res.ok) throw new Error(data.error || "Upload failed");
     return data.url;
   };
 
