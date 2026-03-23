@@ -45,13 +45,17 @@ const defaultData: Data = {
   suggestions: [],
 };
 
-// Initialize DB
-const db = await JSONFilePreset<Data>('db.json', defaultData);
+let db: any = null;
+let initPromise: Promise<void> | null = null;
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
 if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+  try {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  } catch (err) {
+    console.error('Failed to create uploads directory:', err);
+  }
 }
 
 // Multer setup
@@ -74,15 +78,40 @@ const io = new Server(httpServer, {
   },
 });
 
-let initPromise: Promise<void> | null = null;
-
 async function initialize() {
   if (initPromise) return initPromise;
   
+  console.log(`Starting server initialization in ${process.env.NODE_ENV || 'development'} mode...`);
+  
   initPromise = (async () => {
+    try {
+      const dbPath = path.join(process.cwd(), 'db.json');
+      console.log(`Loading database from ${dbPath}...`);
+      
+      // Use JSONFilePreset but with error handling
+      db = await JSONFilePreset<Data>(dbPath, defaultData);
+      console.log('Database loaded successfully.');
+    } catch (err) {
+      console.error('CRITICAL: Failed to load database:', err);
+      // Fallback to in-memory if file fails to prevent crash
+      console.log('Falling back to in-memory database.');
+      db = { 
+        data: JSON.parse(JSON.stringify(defaultData)), 
+        write: async () => { console.log('Mock DB write'); },
+        read: async () => { console.log('Mock DB read'); }
+      };
+    }
+
     app.use(cors());
     app.use(express.json());
     app.use(cookieParser());
+    
+    // Request logging
+    app.use((req, res, next) => {
+      console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+      next();
+    });
+
     app.use(
       session({
         secret: process.env.SESSION_SECRET || 'anglibot-secret',
@@ -95,6 +124,16 @@ async function initialize() {
         },
       })
     );
+
+    // Health check route - available immediately after middleware
+    app.get('/api/health', (req, res) => {
+      res.json({ 
+        status: 'ok', 
+        dbLoaded: !!db, 
+        env: process.env.NODE_ENV || 'development',
+        time: new Date().toISOString()
+      });
+    });
 
     // Serve uploads
     app.use('/uploads', express.static(uploadsDir));
@@ -342,6 +381,7 @@ async function initialize() {
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: 'spa',
+        root: process.cwd(),
       });
       app.use(vite.middlewares);
     } else {
@@ -358,9 +398,10 @@ async function initialize() {
       res.status(500).json({ error: 'A server error occurred', details: err.message });
     });
 
+    // Start listening AFTER middleware is ready
     if (!httpServer.listening) {
       httpServer.listen(PORT, '0.0.0.0', () => {
-        console.log(`Server running at http://0.0.0.0:${PORT}`);
+        console.log(`Server process started and listening on port ${PORT}`);
       });
     }
 
