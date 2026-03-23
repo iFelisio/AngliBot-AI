@@ -22,11 +22,54 @@ declare module 'express-session' {
 
 dotenv.config();
 
-const PORT = 3000;
-const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+console.log(`[${new Date().toISOString()}] Environment:`, {
+  NODE_ENV: process.env.NODE_ENV,
+  PORT: process.env.PORT || 3000,
+  APP_URL: process.env.APP_URL,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY ? 'SET' : 'NOT SET',
+  SESSION_SECRET: process.env.SESSION_SECRET ? 'SET' : 'NOT SET',
+});
 
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY || '' });
+process.on('uncaughtException', (err) => {
+  console.error(`[${new Date().toISOString()}] UNCAUGHT EXCEPTION:`, err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error(`[${new Date().toISOString()}] UNHANDLED REJECTION at:`, promise, 'reason:', reason);
+});
+
+const PORT = 3000;
+const app = express();
+app.set('trust proxy', 1);
+
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: '*',
+  },
+});
+
+// 1. Add Health Check IMMEDIATELY
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    dbReady: isDbReady, 
+    env: process.env.NODE_ENV || 'development',
+    time: new Date().toISOString()
+  });
+});
+
+// 2. Start Listening IMMEDIATELY
+if (!httpServer.listening) {
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`[${new Date().toISOString()}] Server process started and listening on port ${PORT}`);
+  });
+}
+
+let ai: any = null;
+let db: any = null;
+let isDbReady = false;
+let startPromise: Promise<void> | null = null;
 
 // Database structure
 type Data = {
@@ -45,62 +88,53 @@ const defaultData: Data = {
   suggestions: [],
 };
 
-let db: any = null;
-let isDbReady = false;
-let startPromise: Promise<void> | null = null;
-
-// Ensure uploads directory exists
-const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  try {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-  } catch (err) {
-    console.error('Failed to create uploads directory:', err);
-  }
-}
-
-// Multer setup
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${uuidv4()}${ext}`);
-  },
-});
-const upload = multer({ storage });
-
-const app = express();
-app.set('trust proxy', 1);
-
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: {
-    origin: '*',
-  },
-});
-
 async function startServer() {
-  if (startPromise) return startPromise;
+  if (startPromise) {
+    console.log(`[${new Date().toISOString()}] startServer called but already initializing.`);
+    return startPromise;
+  }
 
   startPromise = (async () => {
-    console.log(`[${new Date().toISOString()}] Server starting in ${process.env.NODE_ENV || 'development'} mode...`);
+    console.log(`[${new Date().toISOString()}] Initializing AI and DB...`);
 
-    // 1. Listen immediately to satisfy platform health checks
-    if (!httpServer.listening) {
-      httpServer.listen(PORT, '0.0.0.0', () => {
-        console.log(`[${new Date().toISOString()}] Server listening on port ${PORT}`);
-      });
+    // 3. Initialize AI
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY || '' });
+
+    // 4. Ensure uploads directory exists
+    const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
+    if (!fs.existsSync(uploadsDir)) {
+      try {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      } catch (err) {
+        console.error('Failed to create uploads directory:', err);
+      }
     }
 
-    // 2. Basic Middleware
+    // 5. Multer setup
+    const storage = multer.diskStorage({
+      destination: (req, file, cb) => {
+        cb(null, uploadsDir);
+      },
+      filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, `${uuidv4()}${ext}`);
+      },
+    });
+    const upload = multer({ storage });
+    const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
+
+    console.log(`[${new Date().toISOString()}] Initializing middleware and routes...`);
+
+    // 6. Basic Middleware
     app.use(cors());
     app.use(express.json());
     app.use(cookieParser());
     
     app.use((req, res, next) => {
-      console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+      if (req.url !== '/api/health') {
+        console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+      }
       next();
     });
 
@@ -117,17 +151,7 @@ async function startServer() {
       })
     );
 
-    // 3. Health check (available immediately)
-    app.get('/api/health', (req, res) => {
-      res.json({ 
-        status: 'ok', 
-        dbReady: isDbReady, 
-        env: process.env.NODE_ENV || 'development',
-        time: new Date().toISOString()
-      });
-    });
-
-    // 4. API Routes
+    // 7. API Routes
     const requireAuth = (req: any, res: any, next: any) => {
       if (req.session.user) {
         next();
@@ -432,8 +456,3 @@ async function startServer() {
 
 // Start immediately
 startServer().catch(err => console.error('Boot Error:', err));
-
-export default async (req: any, res: any) => {
-  await startServer();
-  return app(req, res);
-};
