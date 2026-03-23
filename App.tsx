@@ -190,41 +190,10 @@ const App: React.FC = () => {
             <AngliBotLogo className="w-16 h-16" />
           </div>
           <h1 className="text-3xl font-black mb-2 tracking-tight text-center">AngliBot AI</h1>
-          <p className="text-zinc-500 mb-8 text-sm font-medium leading-relaxed text-center">Identifikohuni për të vazhduar mësimin.</p>
-          
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-widest text-zinc-500 mb-2 ml-1">Përdoruesi</label>
-              <input 
-                type="text" 
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Përdoruesi"
-                className={`w-full px-5 py-4 rounded-2xl border outline-none transition-all ${isDarkTheme ? 'bg-zinc-800 border-zinc-700 focus:border-indigo-500' : 'bg-zinc-50 border-zinc-200 focus:border-indigo-500'}`}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-widest text-zinc-500 mb-2 ml-1">Fjalëkalimi</label>
-              <input 
-                type="password" 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className={`w-full px-5 py-4 rounded-2xl border outline-none transition-all ${isDarkTheme ? 'bg-zinc-800 border-zinc-700 focus:border-indigo-500' : 'bg-zinc-50 border-zinc-200 focus:border-indigo-500'}`}
-              />
-            </div>
-            
-            {loginError && (
-              <p className="text-xs font-bold text-red-500 text-center animate-bounce">{loginError}</p>
-            )}
-
-            <button 
-              type="submit"
-              className="w-full bg-black text-white py-5 rounded-2xl font-bold hover:bg-zinc-800 active:scale-[0.98] transition-all shadow-xl shadow-black/10 mt-4"
-            >
-              Hyni në Llogari
-            </button>
-          </form>
+          <p className="text-zinc-500 mb-8 text-sm font-medium leading-relaxed text-center">Duke hapur aplikacionin...</p>
+          <div className="flex justify-center">
+            <i className="fas fa-circle-notch animate-spin text-4xl text-indigo-500"></i>
+          </div>
         </div>
       </div>
     );
@@ -262,7 +231,6 @@ const App: React.FC = () => {
                   <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">{currentUser.points || 0} XP • {currentUser.streak || 0} DITË</p>
                 </div>
               </div>
-              <button onClick={handleLogout} className="w-full py-2 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg transition-colors">Çkyçu</button>
             </div>
           </div>
         </aside>
