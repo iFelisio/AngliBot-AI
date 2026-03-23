@@ -161,7 +161,7 @@ const App: React.FC = () => {
                 type="text" 
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin"
+                placeholder="Përdoruesi"
                 className={`w-full px-5 py-4 rounded-2xl border outline-none transition-all ${isDarkTheme ? 'bg-zinc-800 border-zinc-700 focus:border-indigo-500' : 'bg-zinc-50 border-zinc-200 focus:border-indigo-500'}`}
               />
             </div>
@@ -187,10 +187,6 @@ const App: React.FC = () => {
               Hyni në Llogari
             </button>
           </form>
-
-          <p className="mt-8 text-[10px] text-zinc-400 font-medium text-center">
-            Username: <strong>admin</strong> | Password: <strong>123admin</strong>
-          </p>
         </div>
       </div>
     );

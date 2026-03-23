@@ -90,8 +90,8 @@ async function initialize() {
       resave: false,
       saveUninitialized: true,
       cookie: { 
-        secure: true, 
-        sameSite: 'none',
+        secure: process.env.NODE_ENV === 'production', 
+        sameSite: 'lax',
         httpOnly: true 
       },
     })
@@ -363,13 +363,10 @@ async function initialize() {
   isInitialized = true;
 }
 
-if (process.env.NODE_ENV !== 'production') {
-  initialize().then(() => {
-    httpServer.listen(PORT, '0.0.0.0', () => {
-      console.log(`Server running at http://0.0.0.0:${PORT}`);
-    });
-  });
-}
+// Start the server
+initialize().catch(err => {
+  console.error('Failed to initialize server:', err);
+});
 
 export default async (req: any, res: any) => {
   await initialize();
