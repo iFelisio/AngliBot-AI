@@ -46,41 +46,20 @@ const App: React.FC = () => {
 
   const [globalError, setGlobalError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // Initial fetch
-    const fetchData = async () => {
-      try {
-        const [me, users, dialogues, animations, suggestions, logs, config] = await Promise.all([
-          safeFetch('/api/auth/me'),
-          safeFetch('/api/users'),
-          safeFetch('/api/dialogues'),
-          safeFetch('/api/animations'),
-          safeFetch('/api/suggestions'),
-          safeFetch('/api/logs'),
-          safeFetch('/api/config/status')
-        ]);
+  const normalizeErrorMessage = (message?: string) => {
+    const fallback = 'Shërbimi është përkohësisht i padisponueshëm. Ju lutem provoni sërish pas pak.';
+    if (!message) return fallback;
 
-        if (me.ok) setCurrentUser(me.data);
-        if (users.ok) setAllUsers(users.data);
-        if (dialogues.ok) setDialogues(dialogues.data);
-        if (animations.ok) setAnimations(animations.data);
-        if (suggestions.ok) setSuggestions(suggestions.data);
-        if (logs.ok) setLoginLogs(logs.data);
-        if (config.ok) setConfigStatus(config.data);
-        
-        // If any critical ones failed with non-auth errors
-        const criticalErrors = [me, config].filter(r => !r.ok && r.status !== 401);
-        if (criticalErrors.length > 0) {
-          setGlobalError(`Gabim në rrjet: ${criticalErrors[0].data.error || 'Dështim i panjohur'}`);
-        }
-      } catch (e: any) {
-        console.error("Error fetching initial data", e);
-        setGlobalError(`Gabim në rrjet: ${e.message || 'Dështim i panjohur'}`);
-      }
-    };
+    if (message.includes('FUNCTION_INVOCATION_FAILED') || message.includes('A server error has occurred')) {
+      return 'Serveri u ndërpre gjatë përpunimit të kërkesës. Rifresko faqen ose provo sërish pas pak.';
+    }
 
-    fetchData();
-  }, []);
+    if (message.includes('<!doctype html') || message.includes('<html')) {
+      return fallback;
+    }
+
+    return message;
+  };
 
   const safeFetch = async (url: string, options?: RequestInit) => {
     const res = await fetch(url, options);
@@ -89,10 +68,49 @@ const App: React.FC = () => {
     try {
       data = JSON.parse(text);
     } catch (e) {
-      data = { error: text || res.statusText || 'Gabim i panjohur' };
+      data = { error: normalizeErrorMessage(text || res.statusText || 'Gabim i panjohur') };
     }
+
+    if (data?.error) {
+      data.error = normalizeErrorMessage(data.error);
+    }
+
     return { ok: res.ok, status: res.status, data };
   };
+
+  useEffect(() => {
+    // Initial fetch
+    const fetchData = async () => {
+      try {
+        const bootstrap = await safeFetch('/api/bootstrap');
+
+        if (bootstrap.ok) {
+          setCurrentUser(bootstrap.data.currentUser || null);
+          setAllUsers(bootstrap.data.users || []);
+          setDialogues(bootstrap.data.dialogues || []);
+          setAnimations(bootstrap.data.animations || []);
+          setSuggestions(bootstrap.data.suggestions || []);
+          setLoginLogs(bootstrap.data.logs || []);
+          setConfigStatus(bootstrap.data.config || null);
+          setGlobalError(null);
+          return;
+        }
+
+        if (bootstrap.data?.config) {
+          setConfigStatus(bootstrap.data.config);
+        }
+
+        if (bootstrap.status !== 401) {
+          setGlobalError(`Gabim në rrjet: ${bootstrap.data.error || 'Dështim i panjohur'}`);
+        }
+      } catch (e: any) {
+        console.error("Error fetching initial data", e);
+        setGlobalError(`Gabim në rrjet: ${normalizeErrorMessage(e.message || 'Dështim i panjohur')}`);
+      }
+    };
+
+    fetchData();
+  }, []);
 
   const addPoints = async (pts: number) => {
     if (!currentUser) return;

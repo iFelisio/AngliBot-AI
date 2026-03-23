@@ -25,6 +25,28 @@ app.set('trust proxy', 1);
 
 let ai: any = null;
 let isDbReady = false;
+let initPromise: Promise<void> | null = null;
+
+const ensureDefaultAdminUser = async () => {
+  let user = await User.findOne({ email: 'admin@anglibot.ai' }).lean();
+  if (!user) {
+    user = await User.create({
+      id: 'admin-id',
+      name: 'Administrator',
+      email: 'admin@anglibot.ai',
+      picture: 'https://cdn-icons-png.flaticon.com/512/149/149071.png',
+      isAdmin: true,
+      points: 1000,
+      streak: 1,
+      lastLogin: new Date().toISOString(),
+      badges: ['Admin'],
+      proficiency: 'Advanced',
+      goal: 'Manage Platform',
+    });
+  }
+
+  return user;
+};
 
 // Vercel specific paths
 const isVercel = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
@@ -48,25 +70,42 @@ const LoginLog = mongoose.models.LoginLog || mongoose.model<any>('LoginLog', new
 
 // Initialize AI and DB lazily
 async function initServices() {
-  if (!ai) {
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY || '' });
+  if (!initPromise) {
+    initPromise = (async () => {
+      if (!ai) {
+        const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+        ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY || '' });
+      }
+
+      if (isDbReady) return;
+
+      if (!process.env.MONGODB_URI) {
+        console.warn('MONGODB_URI is not set. Database will not work.');
+        return;
+      }
+
+      try {
+        if (mongoose.connection.readyState === 1) {
+          isDbReady = true;
+          return;
+        }
+
+        await mongoose.connect(process.env.MONGODB_URI, {
+          serverSelectionTimeoutMS: 5000,
+          socketTimeoutMS: 45000,
+        });
+        isDbReady = true;
+        console.log('MongoDB connected successfully');
+      } catch (err) {
+        isDbReady = mongoose.connection.readyState === 1;
+        console.error('MongoDB connection error:', err);
+      }
+    })().finally(() => {
+      initPromise = null;
+    });
   }
-  if (!isDbReady && process.env.MONGODB_URI) {
-    try {
-      await mongoose.connect(process.env.MONGODB_URI, {
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 45000,
-      });
-      isDbReady = true;
-      console.log('MongoDB connected successfully');
-    } catch (err) {
-      console.error('MongoDB connection error:', err);
-      // Don't set isDbReady to true if connection fails
-    }
-  } else if (!process.env.MONGODB_URI) {
-    console.warn('MONGODB_URI is not set. Database will not work.');
-  }
+
+  await initPromise;
 }
 
 // Multer setup
@@ -128,26 +167,10 @@ app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
 
   if (username === 'admin' && password === '123admin') {
-    let user = await User.findOne({ email: 'admin@anglibot.ai' }).lean();
+    let user = await ensureDefaultAdminUser();
 
-    if (!user) {
-      user = await User.create({
-        id: 'admin-id',
-        name: 'Administrator',
-        email: 'admin@anglibot.ai',
-        picture: 'https://cdn-icons-png.flaticon.com/512/149/149071.png',
-        isAdmin: true,
-        points: 1000,
-        streak: 1,
-        lastLogin: new Date().toISOString(),
-        badges: ['Admin'],
-        proficiency: 'Advanced',
-        goal: 'Manage Platform',
-      });
-    } else {
-      await User.updateOne({ email: 'admin@anglibot.ai' }, { lastLogin: new Date().toISOString() });
-      user.lastLogin = new Date().toISOString();
-    }
+    await User.updateOne({ email: 'admin@anglibot.ai' }, { lastLogin: new Date().toISOString() });
+    user.lastLogin = new Date().toISOString();
 
     await LoginLog.create({
       id: uuidv4(),
@@ -167,25 +190,52 @@ app.get('/api/auth/me', async (req: any, res) => {
   await initServices();
   if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   if (!req.session.user) {
-    let user = await User.findOne({ email: 'admin@anglibot.ai' }).lean();
-    if (!user) {
-      user = await User.create({
-        id: 'admin-id',
-        name: 'Administrator',
-        email: 'admin@anglibot.ai',
-        picture: 'https://cdn-icons-png.flaticon.com/512/149/149071.png',
-        isAdmin: true,
-        points: 1000,
-        streak: 1,
-        lastLogin: new Date().toISOString(),
-        badges: ['Admin'],
-        proficiency: 'Advanced',
-        goal: 'Manage Platform',
-      });
-    }
-    req.session.user = user;
+    req.session.user = await ensureDefaultAdminUser();
   }
   res.json(req.session.user);
+});
+
+app.get('/api/bootstrap', async (req: any, res) => {
+  await initServices();
+
+  const config = {
+    SESSION_SECRET: !!process.env.SESSION_SECRET,
+    GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
+    APP_URL: !!process.env.APP_URL,
+    MONGODB_URI: !!process.env.MONGODB_URI,
+  };
+
+  if (!isDbReady) {
+    return res.status(503).json({
+      error: 'Database not connected',
+      config,
+    });
+  }
+
+  if (!req.session.user) {
+    req.session.user = await ensureDefaultAdminUser();
+  }
+
+  const currentUser = req.session.user;
+  const isAdmin = !!currentUser?.isAdmin;
+
+  const [users, dialogues, animations, suggestions, logs] = await Promise.all([
+    isAdmin ? User.find({}).lean() : Promise.resolve([]),
+    Dialogue.find({}).lean(),
+    Animation.find({}).lean(),
+    Suggestion.find({}).lean(),
+    isAdmin ? LoginLog.find({}).lean() : Promise.resolve([]),
+  ]);
+
+  res.json({
+    currentUser,
+    users,
+    dialogues,
+    animations,
+    suggestions,
+    logs,
+    config,
+  });
 });
 
 app.post('/api/auth/logout', (req, res) => {
