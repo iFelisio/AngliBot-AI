@@ -58,6 +58,11 @@ const ensureDefaultAdminUser = async () => {
 // Vercel specific paths
 const isVercel = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
 const uploadsDir = isVercel ? '/tmp/uploads' : path.join(process.cwd(), 'public', 'uploads');
+const hasCloudinaryConfig = Boolean(
+  process.env.CLOUDINARY_CLOUD_NAME &&
+  process.env.CLOUDINARY_API_KEY &&
+  process.env.CLOUDINARY_API_SECRET
+);
 
 if (!fs.existsSync(uploadsDir)) {
   try {
@@ -122,17 +127,54 @@ async function initServices() {
 }
 
 // Multer setup
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${uuidv4()}${ext}`);
-  },
-});
-const upload = multer({ storage });
+const upload = multer({ storage: multer.memoryStorage() });
 const APP_URL = process.env.APP_URL || `http://localhost:3000`;
+
+const uploadToCloudinary = async (file: Express.Multer.File) => {
+  if (!hasCloudinaryConfig) {
+    throw new Error('Cloudinary is not configured');
+  }
+
+  const resourceType =
+    file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/')
+      ? 'video'
+      : 'auto';
+
+  const formData = new FormData();
+  formData.append('file', new Blob([file.buffer], { type: file.mimetype }), file.originalname);
+  formData.append('folder', process.env.CLOUDINARY_FOLDER || 'anglibot');
+  formData.append('public_id', uuidv4());
+
+  const auth = Buffer.from(
+    `${process.env.CLOUDINARY_API_KEY}:${process.env.CLOUDINARY_API_SECRET}`
+  ).toString('base64');
+
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${auth}`,
+      },
+      body: formData,
+    }
+  );
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error?.message || 'Cloudinary upload failed');
+  }
+
+  return data.secure_url || data.url;
+};
+
+const saveLocally = async (file: Express.Multer.File) => {
+  const ext = path.extname(file.originalname);
+  const filename = `${uuidv4()}${ext}`;
+  const filepath = path.join(uploadsDir, filename);
+  await fs.promises.writeFile(filepath, file.buffer);
+  return `${APP_URL}/uploads/${filename}`;
+};
 
 // Middleware
 app.use(cors());
@@ -219,6 +261,9 @@ app.get('/api/bootstrap', asyncRoute(async (req: any, res) => {
     GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
     APP_URL: !!process.env.APP_URL,
     MONGODB_URI: !!process.env.MONGODB_URI,
+    CLOUDINARY_CLOUD_NAME: !!process.env.CLOUDINARY_CLOUD_NAME,
+    CLOUDINARY_API_KEY: !!process.env.CLOUDINARY_API_KEY,
+    CLOUDINARY_API_SECRET: !!process.env.CLOUDINARY_API_SECRET,
   };
 
   if (!isDbReady) {
@@ -262,8 +307,22 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  const url = `${APP_URL}/uploads/${req.file.filename}`;
-  res.json({ url });
+  (async () => {
+    try {
+      const url = hasCloudinaryConfig ? await uploadToCloudinary(req.file!) : await saveLocally(req.file!);
+      res.json({
+        url,
+        storage: hasCloudinaryConfig ? 'cloudinary' : 'local',
+      });
+    } catch (error: any) {
+      console.error('Upload Error:', error);
+      res.status(503).json({
+        error: hasCloudinaryConfig
+          ? `Cloudinary upload failed: ${error.message}`
+          : `Local upload failed: ${error.message}`,
+      });
+    }
+  })();
 });
 
 app.get('/api/users', requireAuth, asyncRoute(async (req, res) => {
@@ -379,6 +438,9 @@ app.get('/api/config/status', (req, res) => {
     GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
     APP_URL: !!process.env.APP_URL,
     MONGODB_URI: !!process.env.MONGODB_URI,
+    CLOUDINARY_CLOUD_NAME: !!process.env.CLOUDINARY_CLOUD_NAME,
+    CLOUDINARY_API_KEY: !!process.env.CLOUDINARY_API_KEY,
+    CLOUDINARY_API_SECRET: !!process.env.CLOUDINARY_API_SECRET,
   });
 });
 

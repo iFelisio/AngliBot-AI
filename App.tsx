@@ -340,7 +340,7 @@ const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ c
           </div>
           <div>
             <h1 className="text-3xl font-black tracking-tight">Konfigurimi i Nevojshëm</h1>
-            <p className="text-zinc-500 font-medium">Ju lutem plotësoni variablat e mëposhtme në AI Studio.</p>
+            <p className="text-zinc-500 font-medium">Ju lutem plotësoni variablat e mëposhtme në AI Studio ose Vercel.</p>
           </div>
         </div>
 
@@ -356,6 +356,10 @@ const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ c
                   <p className="text-[10px] uppercase tracking-widest opacity-60 mt-0.5">
                     {key === 'SESSION_SECRET' && 'Një tekst i rastësishëm për sigurinë'}
                     {key === 'GEMINI_API_KEY' && 'Çelësi i AI nga Google AI Studio'}
+                    {key === 'CLOUDINARY_CLOUD_NAME' && 'Emri i cloud-it për storage të file-ve'}
+                    {key === 'CLOUDINARY_API_KEY' && 'API key për upload-et në Cloudinary'}
+                    {key === 'CLOUDINARY_API_SECRET' && 'API secret për upload-et në Cloudinary'}
+                    {key === 'MONGODB_URI' && 'Lidhja e databazës MongoDB Atlas'}
                   </p>
                 </div>
               </div>
@@ -902,9 +906,9 @@ const AdminView: React.FC<{
       method: 'POST',
       body: formData
     });
-    
-    if (!res.ok) throw new Error("Upload failed");
-    const data = await res.json();
+
+    const data = await res.json().catch(() => ({ error: 'Upload failed' }));
+    if (!res.ok) throw new Error(data.error || "Upload failed");
     return data.url;
   };
 
