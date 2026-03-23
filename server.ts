@@ -389,7 +389,7 @@ async function startServer() {
       }
     });
 
-    app.all('/api/*', (req, res) => {
+    app.all('/api/*all', (req, res) => {
       res.status(404).json({ error: `API route ${req.method} ${req.url} not found` });
     });
 
@@ -412,12 +412,12 @@ async function startServer() {
       if (fs.existsSync(distPath)) {
         console.log(`[${new Date().toISOString()}] Serving static files from ${distPath}`);
         app.use(express.static(distPath));
-        app.get('*', (req, res) => {
+        app.get('*all', (req, res) => {
           res.sendFile(path.join(distPath, 'index.html'));
         });
       } else {
         console.error(`[${new Date().toISOString()}] dist directory not found at ${distPath}`);
-        app.get('*', (req, res) => {
+        app.get('*all', (req, res) => {
           res.status(404).send('Frontend not built');
         });
       }
