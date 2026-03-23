@@ -39,6 +39,7 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // Mongoose Models
+mongoose.set('bufferCommands', false);
 const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({ id: String, email: String }, { strict: false }));
 const Dialogue = mongoose.models.Dialogue || mongoose.model('Dialogue', new mongoose.Schema({ id: String }, { strict: false }));
 const Animation = mongoose.models.Animation || mongoose.model('Animation', new mongoose.Schema({ id: String }, { strict: false }));
@@ -53,11 +54,15 @@ async function initServices() {
   }
   if (!isDbReady && process.env.MONGODB_URI) {
     try {
-      await mongoose.connect(process.env.MONGODB_URI);
+      await mongoose.connect(process.env.MONGODB_URI, {
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 45000,
+      });
       isDbReady = true;
-      console.log('MongoDB connected');
+      console.log('MongoDB connected successfully');
     } catch (err) {
       console.error('MongoDB connection error:', err);
+      // Don't set isDbReady to true if connection fails
     }
   } else if (!process.env.MONGODB_URI) {
     console.warn('MONGODB_URI is not set. Database will not work.');
@@ -119,6 +124,7 @@ app.use('/uploads', express.static(uploadsDir));
 
 app.post('/api/auth/login', async (req, res) => {
   await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const { username, password } = req.body;
 
   if (username === 'admin' && password === '123admin') {
@@ -159,6 +165,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', async (req: any, res) => {
   await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   if (!req.session.user) {
     let user = await User.findOne({ email: 'admin@anglibot.ai' }).lean();
     if (!user) {
@@ -194,17 +201,23 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
 });
 
 app.get('/api/users', requireAuth, async (req, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const users = await User.find({}).lean();
   res.json(users);
 });
 
 app.delete('/api/users/:id', requireAuth, async (req: any, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   if (!req.session.user?.isAdmin) return res.status(403).json({ error: 'Forbidden' });
   await User.deleteOne({ id: req.params.id });
   res.json({ success: true });
 });
 
 app.patch('/api/users/:id', requireAuth, async (req, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const updated = await User.findOneAndUpdate({ id: req.params.id }, req.body, { new: true }).lean();
   if (updated) {
     res.json(updated);
@@ -215,48 +228,63 @@ app.patch('/api/users/:id', requireAuth, async (req, res) => {
 
 app.get('/api/dialogues', async (req, res) => {
   await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const dialogues = await Dialogue.find({}).lean();
   res.json(dialogues);
 });
 
 app.post('/api/dialogues', requireAuth, async (req, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const newDialogue = await Dialogue.create({ ...req.body, id: uuidv4(), createdAt: new Date().toISOString() });
   res.json(newDialogue);
 });
 
 app.delete('/api/dialogues/:id', requireAuth, async (req, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   await Dialogue.deleteOne({ id: req.params.id });
   res.json({ success: true });
 });
 
 app.get('/api/animations', async (req, res) => {
   await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const animations = await Animation.find({}).lean();
   res.json(animations);
 });
 
 app.post('/api/animations', requireAuth, async (req, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const newAnim = await Animation.create({ ...req.body, id: uuidv4(), createdAt: new Date().toISOString() });
   res.json(newAnim);
 });
 
 app.delete('/api/animations/:id', requireAuth, async (req, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   await Animation.deleteOne({ id: req.params.id });
   res.json({ success: true });
 });
 
 app.get('/api/suggestions', async (req, res) => {
   await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const suggestions = await Suggestion.find({}).lean();
   res.json(suggestions);
 });
 
 app.post('/api/suggestions', requireAuth, async (req, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const newSuggestion = await Suggestion.create({ ...req.body, id: uuidv4(), date: new Date().toLocaleDateString() });
   res.json(newSuggestion);
 });
 
 app.patch('/api/suggestions/:id', requireAuth, async (req, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const updated = await Suggestion.findOneAndUpdate({ id: req.params.id }, req.body, { new: true }).lean();
   if (updated) {
     res.json(updated);
@@ -266,11 +294,15 @@ app.patch('/api/suggestions/:id', requireAuth, async (req, res) => {
 });
 
 app.get('/api/logs', requireAuth, async (req, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const logs = await LoginLog.find({}).lean();
   res.json(logs);
 });
 
 app.delete('/api/logs', requireAuth, async (req, res) => {
+  await initServices();
+  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   await LoginLog.deleteMany({});
   res.json({ success: true });
 });
