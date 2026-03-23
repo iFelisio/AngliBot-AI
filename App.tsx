@@ -54,6 +54,10 @@ const App: React.FC = () => {
       return 'Serveri u ndërpre gjatë përpunimit të kërkesës. Rifresko faqen ose provo sërish pas pak.';
     }
 
+    if (message.includes('Database temporarily unavailable') || message.includes('Database not connected')) {
+      return 'Lidhja me databazën dështoi në server. Kontrollo MONGODB_URI në Vercel dhe provo sërish.';
+    }
+
     if (message.includes('<!doctype html') || message.includes('<html')) {
       return fallback;
     }
