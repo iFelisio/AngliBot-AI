@@ -43,9 +43,6 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [configStatus, setConfigStatus] = useState<any>(null);
-  const [loginError, setLoginError] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const socketRef = useRef<Socket | null>(null);
   const location = useLocation();
 
@@ -113,33 +110,6 @@ const App: React.FC = () => {
     return { ok: res.ok, status: res.status, data };
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError('');
-    try {
-      const { ok, data } = await safeFetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-      });
-      
-      if (ok) {
-        setCurrentUser(data);
-        window.location.reload();
-      } else {
-        setLoginError(data.error || 'Dështoi hyrja');
-      }
-    } catch (e: any) {
-      console.error("Login error", e);
-      setLoginError(`Gabim në rrjet: ${e.message || 'Dështim i panjohur'}`);
-    }
-  };
-
-  const handleLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    setCurrentUser(null);
-  };
-
   const addPoints = async (pts: number) => {
     if (!currentUser) return;
     const newPoints = (currentUser.points || 0) + pts;
@@ -204,9 +174,14 @@ const App: React.FC = () => {
       {/* Sidebar */}
         <aside className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} ${isDarkTheme ? 'bg-zinc-900/50 border-r border-zinc-800' : 'bg-white/80 border-r border-zinc-200'} backdrop-blur-xl`}>
           <div className="flex flex-col h-full p-6">
-            <div className="flex items-center gap-3 mb-10 px-2">
-              <AngliBotLogo />
-              <span className="text-xl font-black tracking-tighter">AngliBot AI</span>
+            <div className="flex items-center justify-between mb-10 px-2">
+              <div className="flex items-center gap-3">
+                <AngliBotLogo />
+                <span className="text-xl font-black tracking-tighter">AngliBot AI</span>
+              </div>
+              <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden p-2 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
+                <i className="fas fa-times text-xl"></i>
+              </button>
             </div>
             
             <nav className="flex-1 space-y-1">
@@ -224,10 +199,10 @@ const App: React.FC = () => {
             <div className={`mt-auto p-4 rounded-2xl border transition-all ${isDarkTheme ? 'bg-zinc-800/50 border-zinc-700' : 'bg-zinc-100/50 border-zinc-200'}`}>
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg">
-                  {currentUser.name[0]}
+                  {(currentUser.name || currentUser.displayName || 'U')[0].toUpperCase()}
                 </div>
                 <div className="overflow-hidden">
-                  <p className="text-sm font-bold truncate">{currentUser.name}</p>
+                  <p className="text-sm font-bold truncate">{currentUser.name || currentUser.displayName || 'Përdorues'}</p>
                   <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">{currentUser.points || 0} XP • {currentUser.streak || 0} DITË</p>
                 </div>
               </div>
@@ -272,31 +247,33 @@ const App: React.FC = () => {
                   await fetch('/api/suggestions', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ userId: currentUser.id, userName: currentUser.name, text })
+                    body: JSON.stringify({ userId: currentUser.id, userName: currentUser.name || currentUser.displayName || 'Përdorues', text })
                   });
                 }} isDark={isDarkTheme} />} />
                 <Route path="/settings" element={<SettingsView currentTheme={theme} onThemeChange={setTheme} isDark={isDarkTheme} />} />
                 {currentUser.isAdmin && (
                   <Route path="/admin" element={
-                    <AdminView 
-                      users={allUsers} 
-                      suggestions={suggestions} 
-                      loginLogs={loginLogs} 
-                      dialogues={dialogues} 
-                      animations={animations} 
-                      onDialogueAdd={async d => { await fetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }); }} 
-                      onDialogueRemove={async id => { await fetch(`/api/dialogues/${id}`, { method: 'DELETE' }); }} 
-                      onClearDialogues={async () => { for (const d of dialogues) { await fetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); } }}
-                      onAnimationAdd={async a => { await fetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }); }} 
-                      onAnimationRemove={async id => { await fetch(`/api/animations/${id}`, { method: 'DELETE' }); }} 
-                      onMakeAdmin={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) }); }} 
-                      onRespondSuggestion={async (id, msg) => { await fetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) }); }} 
-                      onClearLogs={async () => { await fetch('/api/logs', { method: 'DELETE' }); }} 
-                      onDeleteUser={async id => { await fetch(`/api/users/${id}`, { method: 'DELETE' }); }} 
-                      onClearScoreboard={async () => { for (const u of allUsers) { if (u.points > 0) { await fetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } } }} 
-                      onResetUserScore={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); }} 
-                      isDark={isDarkTheme} 
-                    />
+                    <AdminLoginWrapper isDark={isDarkTheme}>
+                      <AdminView 
+                        users={allUsers} 
+                        suggestions={suggestions} 
+                        loginLogs={loginLogs} 
+                        dialogues={dialogues} 
+                        animations={animations} 
+                        onDialogueAdd={async d => { await fetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }); }} 
+                        onDialogueRemove={async id => { await fetch(`/api/dialogues/${id}`, { method: 'DELETE' }); }} 
+                        onClearDialogues={async () => { for (const d of dialogues) { await fetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); } }}
+                        onAnimationAdd={async a => { await fetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }); }} 
+                        onAnimationRemove={async id => { await fetch(`/api/animations/${id}`, { method: 'DELETE' }); }} 
+                        onMakeAdmin={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) }); }} 
+                        onRespondSuggestion={async (id, msg) => { await fetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) }); }} 
+                        onClearLogs={async () => { await fetch('/api/logs', { method: 'DELETE' }); }} 
+                        onDeleteUser={async id => { await fetch(`/api/users/${id}`, { method: 'DELETE' }); }} 
+                        onClearScoreboard={async () => { for (const u of allUsers) { if (u.points > 0) { await fetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } } }} 
+                        onResetUserScore={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); }} 
+                        isDark={isDarkTheme} 
+                      />
+                    </AdminLoginWrapper>
                   } />
                 )}
               </Routes>
@@ -806,6 +783,59 @@ const SettingsView: React.FC<{ currentTheme: ThemeColor; onThemeChange: (t: Them
             <i className="fab fa-facebook text-zinc-400 hover:text-black cursor-pointer"></i>
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+const AdminLoginWrapper: React.FC<{ children: React.ReactNode; isDark: boolean }> = ({ children, isDark }) => {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  if (isAuthenticated) {
+    return <>{children}</>;
+  }
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (username === 'admi' && password === '123admin') {
+      setIsAuthenticated(true);
+      setError('');
+    } else {
+      setError('Kredencialet e gabuara');
+    }
+  };
+
+  return (
+    <div className={`flex items-center justify-center h-full ${isDark ? 'bg-zinc-950 text-zinc-100' : 'bg-zinc-50 text-zinc-900'}`}>
+      <div className={`p-8 rounded-2xl shadow-xl w-full max-w-md ${isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-white border border-zinc-200'}`}>
+        <h2 className="text-2xl font-black mb-6 text-center">Hyrja e Administratorit</h2>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label className="block text-sm font-bold mb-2">Përdoruesi</label>
+            <input 
+              type="text" 
+              value={username} 
+              onChange={(e) => setUsername(e.target.value)} 
+              className={`w-full p-3 rounded-xl border focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDark ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-zinc-50 border-zinc-300 text-black'}`}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-bold mb-2">Fjalëkalimi</label>
+            <input 
+              type="password" 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              className={`w-full p-3 rounded-xl border focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDark ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-zinc-50 border-zinc-300 text-black'}`}
+            />
+          </div>
+          {error && <p className="text-red-500 text-sm font-bold">{error}</p>}
+          <button type="submit" className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-colors">
+            Hyr
+          </button>
+        </form>
       </div>
     </div>
   );

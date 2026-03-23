@@ -208,6 +208,8 @@ async function startServer() {
       if (!isDbReady) return res.status(503).json({ error: 'Database initializing' });
       if (!req.session.user) {
         await db.read();
+        if (!db.data) db.data = { users: [], dialogues: [], animations: [], loginLogs: [], suggestions: [] };
+        if (!db.data.users) db.data.users = [];
         let user = db.data.users.find((u: any) => u.email === 'admin@anglibot.ai');
         if (!user) {
           user = {
@@ -246,7 +248,7 @@ async function startServer() {
     app.get('/api/users', requireAuth, async (req, res) => {
       if (!isDbReady) return res.status(503).json({ error: 'DB not ready' });
       await db.read();
-      res.json(db.data.users);
+      res.json(db.data?.users || []);
     });
 
     app.delete('/api/users/:id', requireAuth, async (req: any, res) => {
@@ -276,7 +278,7 @@ async function startServer() {
     app.get('/api/dialogues', async (req, res) => {
       if (!isDbReady) return res.json([]);
       await db.read();
-      res.json(db.data.dialogues);
+      res.json(db.data?.dialogues || []);
     });
 
     app.post('/api/dialogues', requireAuth, async (req, res) => {
@@ -301,7 +303,7 @@ async function startServer() {
     app.get('/api/animations', async (req, res) => {
       if (!isDbReady) return res.json([]);
       await db.read();
-      res.json(db.data.animations);
+      res.json(db.data?.animations || []);
     });
 
     app.post('/api/animations', requireAuth, async (req, res) => {
@@ -326,7 +328,7 @@ async function startServer() {
     app.get('/api/suggestions', async (req, res) => {
       if (!isDbReady) return res.json([]);
       await db.read();
-      res.json(db.data.suggestions);
+      res.json(db.data?.suggestions || []);
     });
 
     app.post('/api/suggestions', requireAuth, async (req, res) => {
@@ -356,7 +358,7 @@ async function startServer() {
     app.get('/api/logs', requireAuth, async (req, res) => {
       if (!isDbReady) return res.json([]);
       await db.read();
-      res.json(db.data.loginLogs);
+      res.json(db.data?.loginLogs || []);
     });
 
     app.delete('/api/logs', requireAuth, async (req, res) => {
