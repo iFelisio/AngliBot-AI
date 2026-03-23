@@ -4,7 +4,6 @@ import { Server } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
-import { OAuth2Client } from 'google-auth-library';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import cookieParser from 'cookie-parser';
@@ -69,17 +68,19 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-const client = new OAuth2Client(GOOGLE_CLIENT_ID);
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: '*',
+  },
+});
 
-async function startServer() {
-  const app = express();
-  const httpServer = createServer(app);
-  const io = new Server(httpServer, {
-    cors: {
-      origin: '*',
-    },
-  });
+let isInitialized = false;
 
+async function initialize() {
+  if (isInitialized) return;
+  
   app.use(cors());
   app.use(express.json());
   app.use(cookieParser());
@@ -110,56 +111,27 @@ async function startServer() {
 
   // --- API Routes ---
 
-  // Google Auth URL
-  app.get('/api/auth/google/url', (req, res) => {
-    const redirectUri = `${APP_URL}/api/auth/google/callback`;
-    const url = `https://accounts.google.com/o/oauth2/v2/auth?` + 
-      new URLSearchParams({
-        client_id: GOOGLE_CLIENT_ID!,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: 'openid email profile',
-        access_type: 'offline',
-        prompt: 'consent'
-      }).toString();
-    res.json({ url });
-  });
-
-  // Google Auth Callback
-  app.get('/api/auth/google/callback', async (req, res) => {
-    const { code } = req.query;
-    try {
-      const redirectUri = `${APP_URL}/api/auth/google/callback`;
-      const { tokens } = await client.getToken({
-        code: code as string,
-        redirect_uri: redirectUri,
-      });
-      const ticket = await client.verifyIdToken({
-        idToken: tokens.id_token!,
-        audience: GOOGLE_CLIENT_ID,
-      });
-      const payload = ticket.getPayload();
-      
-      if (!payload) throw new Error('No payload');
-
-      const { sub: googleId, email, name, picture } = payload;
-
+  // Simple Login
+  app.post('/api/auth/login', async (req, res) => {
+    const { username, password } = req.body;
+    
+    if (username === 'admin' && password === '123admin') {
       await db.read();
-      let user = db.data.users.find(u => u.email === email);
+      let user = db.data.users.find(u => u.email === 'admin@anglibot.ai');
 
       if (!user) {
         user = {
-          id: googleId,
-          name,
-          email,
-          picture,
-          isAdmin: db.data.users.length === 0 || email === 'pajtim1.2.bollobani@gmail.com',
-          points: 0,
-          streak: 0,
+          id: 'admin-id',
+          name: 'Administrator',
+          email: 'admin@anglibot.ai',
+          picture: 'https://cdn-icons-png.flaticon.com/512/149/149071.png',
+          isAdmin: true,
+          points: 1000,
+          streak: 1,
           lastLogin: new Date().toISOString(),
-          badges: [],
-          proficiency: 'Beginner',
-          goal: 'Learn English',
+          badges: ['Admin'],
+          proficiency: 'Advanced',
+          goal: 'Manage Platform',
         };
         db.data.users.push(user);
       } else {
@@ -175,24 +147,9 @@ async function startServer() {
 
       await db.write();
       req.session.user = user;
-
-      res.send(`
-        <html>
-          <body>
-            <script>
-              if (window.opener) {
-                window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', user: ${JSON.stringify(user)} }, '*');
-                window.close();
-              } else {
-                window.location.href = '/';
-              }
-            </script>
-          </body>
-        </html>
-      `);
-    } catch (error) {
-      console.error('Auth error:', error);
-      res.status(500).send('Authentication failed');
+      res.json(user);
+    } else {
+      res.status(401).json({ error: 'Username ose fjalëkalim i gabuar' });
     }
   });
 
@@ -402,6 +359,20 @@ async function startServer() {
     console.log('Client connected');
     socket.on('disconnect', () => console.log('Client disconnected'));
   });
+
+  isInitialized = true;
 }
 
-startServer();
+if (process.env.NODE_ENV !== 'production') {
+  initialize().then(() => {
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running at http://0.0.0.0:${PORT}`);
+    });
+  });
+}
+
+export default async (req: any, res: any) => {
+  await initialize();
+  // @ts-ignore
+  return app(req, res);
+};

@@ -43,7 +43,11 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [configStatus, setConfigStatus] = useState<any>(null);
+  const [loginError, setLoginError] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const socketRef = useRef<Socket | null>(null);
+  const location = useLocation();
 
   useEffect(() => {
     // Socket initialization
@@ -83,28 +87,33 @@ const App: React.FC = () => {
 
     fetchData();
 
-    // OAuth Message Listener
-    const handleOAuthMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        setCurrentUser(event.data.user);
-        fetchData(); // Refresh all data
-      }
-    };
-    window.addEventListener('message', handleOAuthMessage);
-
     return () => {
       socket.disconnect();
-      window.removeEventListener('message', handleOAuthMessage);
     };
   }, []);
 
-  const handleLogin = async () => {
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
     try {
-      const res = await fetch('/api/auth/google/url');
-      const { url } = await res.json();
-      window.open(url, 'google_auth', 'width=600,height=700');
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      
+      if (res.ok) {
+        const user = await res.json();
+        setCurrentUser(user);
+        // Refresh data
+        window.location.reload();
+      } else {
+        const err = await res.json();
+        setLoginError(err.error || 'Dështoi hyrja');
+      }
     } catch (e) {
       console.error("Login error", e);
+      setLoginError('Gabim në rrjet');
     }
   };
 
@@ -129,7 +138,7 @@ const App: React.FC = () => {
 
   const isDarkTheme = theme === 'dark' || (theme === 'default' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-  const isConfigured = configStatus && Object.values(configStatus).every(v => v === true);
+  const isConfigured = configStatus && (configStatus.GEMINI_API_KEY && configStatus.SESSION_SECRET);
 
   if (configStatus && !isConfigured) {
     return <SetupRequiredView configStatus={configStatus} isDark={isDarkTheme} />;
@@ -138,29 +147,58 @@ const App: React.FC = () => {
   if (!currentUser) {
     return (
       <div className={`min-h-screen flex items-center justify-center p-6 ${isDarkTheme ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-black'}`}>
-        <div className={`max-w-md w-full p-10 rounded-[32px] shadow-2xl text-center border transition-all duration-500 ${isDarkTheme ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
-          <div className="flex justify-center mb-8">
-            <AngliBotLogo className="w-20 h-20" />
+        <div className={`max-w-md w-full p-10 rounded-[32px] shadow-2xl border transition-all duration-500 ${isDarkTheme ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+          <div className="flex justify-center mb-6">
+            <AngliBotLogo className="w-16 h-16" />
           </div>
-          <h1 className="text-4xl font-black mb-4 tracking-tight">AngliBot AI</h1>
-          <p className="text-zinc-500 mb-10 text-lg font-medium leading-relaxed">Mësoni anglisht në mënyrë interaktive me fuqinë e Inteligjencës Artificiale.</p>
-          <button 
-            onClick={handleLogin}
-            className="w-full bg-black text-white py-5 rounded-2xl font-bold flex items-center justify-center gap-4 hover:bg-zinc-800 active:scale-[0.98] transition-all shadow-xl shadow-black/10"
-          >
-            <i className="fab fa-google text-xl"></i>
-            Vazhdo me Google
-          </button>
-          <p className="mt-8 text-xs text-zinc-400 font-medium">Duke vazhduar, ju pranoni kushtet tona të përdorimit.</p>
+          <h1 className="text-3xl font-black mb-2 tracking-tight text-center">AngliBot AI</h1>
+          <p className="text-zinc-500 mb-8 text-sm font-medium leading-relaxed text-center">Identifikohuni për të vazhduar mësimin.</p>
+          
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-widest text-zinc-500 mb-2 ml-1">Përdoruesi</label>
+              <input 
+                type="text" 
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="admin"
+                className={`w-full px-5 py-4 rounded-2xl border outline-none transition-all ${isDarkTheme ? 'bg-zinc-800 border-zinc-700 focus:border-indigo-500' : 'bg-zinc-50 border-zinc-200 focus:border-indigo-500'}`}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-widest text-zinc-500 mb-2 ml-1">Fjalëkalimi</label>
+              <input 
+                type="password" 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className={`w-full px-5 py-4 rounded-2xl border outline-none transition-all ${isDarkTheme ? 'bg-zinc-800 border-zinc-700 focus:border-indigo-500' : 'bg-zinc-50 border-zinc-200 focus:border-indigo-500'}`}
+              />
+            </div>
+            
+            {loginError && (
+              <p className="text-xs font-bold text-red-500 text-center animate-bounce">{loginError}</p>
+            )}
+
+            <button 
+              type="submit"
+              className="w-full bg-black text-white py-5 rounded-2xl font-bold hover:bg-zinc-800 active:scale-[0.98] transition-all shadow-xl shadow-black/10 mt-4"
+            >
+              Hyni në Llogari
+            </button>
+          </form>
+
+          <p className="mt-8 text-[10px] text-zinc-400 font-medium text-center">
+            Username: <strong>admin</strong> | Password: <strong>123admin</strong>
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <HashRouter>
-      <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${isDarkTheme ? 'bg-zinc-950 text-zinc-100' : 'bg-zinc-50 text-zinc-900'}`}>
-        {/* Sidebar */}
+    <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${isDarkTheme ? 'bg-zinc-950 text-zinc-100' : 'bg-zinc-50 text-zinc-900'}`}>
+      {/* Sidebar */}
         <aside className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} ${isDarkTheme ? 'bg-zinc-900/50 border-r border-zinc-800' : 'bg-white/80 border-r border-zinc-200'} backdrop-blur-xl`}>
           <div className="flex flex-col h-full p-6">
             <div className="flex items-center gap-3 mb-10 px-2">
@@ -203,8 +241,8 @@ const App: React.FC = () => {
             </button>
             <div className="flex-1 lg:flex-none">
               <h2 className="text-sm font-bold text-zinc-400 uppercase tracking-widest ml-4 lg:ml-0">
-                {useLocation().pathname === '/' ? 'Përkthimi' : 
-                 useLocation().pathname.substring(1).charAt(0).toUpperCase() + useLocation().pathname.substring(2)}
+                {location.pathname === '/' ? 'Përkthimi' : 
+                 location.pathname.substring(1).charAt(0).toUpperCase() + location.pathname.substring(2)}
               </h2>
             </div>
             <div className="flex items-center gap-4">
@@ -296,7 +334,6 @@ const App: React.FC = () => {
           </div>
         </main>
       </div>
-    </HashRouter>
   );
 };
 
@@ -304,8 +341,10 @@ const App: React.FC = () => {
 
 const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ configStatus, isDark }) => {
   const missingKeys = Object.entries(configStatus)
-    .filter(([_, value]) => !value)
+    .filter(([key, value]) => !value && ['GEMINI_API_KEY', 'SESSION_SECRET'].includes(key))
     .map(([key]) => key);
+
+  if (missingKeys.length === 0) return null;
 
   return (
     <div className={`min-h-screen flex items-center justify-center p-6 ${isDark ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-black'}`}>
@@ -330,11 +369,8 @@ const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ c
                 <div>
                   <code className="text-sm font-bold">{key}</code>
                   <p className="text-[10px] uppercase tracking-widest opacity-60 mt-0.5">
-                    {key === 'GOOGLE_CLIENT_ID' && 'ID e Klientit nga Google Cloud'}
-                    {key === 'GOOGLE_CLIENT_SECRET' && 'Sekreti i Klientit nga Google Cloud'}
                     {key === 'SESSION_SECRET' && 'Një tekst i rastësishëm për sigurinë'}
                     {key === 'GEMINI_API_KEY' && 'Çelësi i AI nga Google AI Studio'}
-                    {key === 'APP_URL' && 'URL-ja e këtij aplikacioni'}
                   </p>
                 </div>
               </div>
