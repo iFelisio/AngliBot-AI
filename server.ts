@@ -79,6 +79,22 @@ const Dialogue = mongoose.models.Dialogue || mongoose.model<any>('Dialogue', new
 const Animation = mongoose.models.Animation || mongoose.model<any>('Animation', new mongoose.Schema({ id: String }, { strict: false }));
 const Suggestion = mongoose.models.Suggestion || mongoose.model<any>('Suggestion', new mongoose.Schema({ id: String }, { strict: false }));
 const LoginLog = mongoose.models.LoginLog || mongoose.model<any>('LoginLog', new mongoose.Schema({ id: String }, { strict: false }));
+const isMongoReady = () => mongoose.connection.readyState === mongoose.ConnectionStates.connected;
+const isMongoConnecting = () => mongoose.connection.readyState === mongoose.ConnectionStates.connecting;
+const isMongoDisconnecting = () => mongoose.connection.readyState === mongoose.ConnectionStates.disconnecting;
+
+mongoose.connection.on('connected', () => {
+  isDbReady = true;
+});
+
+mongoose.connection.on('disconnected', () => {
+  isDbReady = false;
+  globalThis.__anglibotMongoPromise = null;
+});
+
+mongoose.connection.on('error', () => {
+  isDbReady = false;
+});
 
 // Initialize AI and DB lazily
 async function initServices() {
@@ -90,8 +106,14 @@ async function initServices() {
         globalThis.__anglibotAi = ai;
       }
 
-      if (mongoose.connection.readyState === 1) {
+      if (isMongoReady()) {
         isDbReady = true;
+        return;
+      }
+
+      if (isMongoConnecting() && globalThis.__anglibotMongoPromise) {
+        await globalThis.__anglibotMongoPromise;
+        isDbReady = isMongoReady();
         return;
       }
 
@@ -102,21 +124,27 @@ async function initServices() {
       }
 
       try {
-        if (!globalThis.__anglibotMongoPromise) {
+        if (isMongoDisconnecting()) {
+          await mongoose.disconnect().catch(() => undefined);
+        }
+
+        if (!globalThis.__anglibotMongoPromise || !isMongoConnecting()) {
           globalThis.__anglibotMongoPromise = mongoose.connect(process.env.MONGODB_URI, {
             serverSelectionTimeoutMS: 5000,
             socketTimeoutMS: 45000,
+            maxPoolSize: 10,
           });
         }
 
         await globalThis.__anglibotMongoPromise;
-        isDbReady = true;
+        isDbReady = isMongoReady();
         console.log('MongoDB connected successfully');
       } catch (err) {
-        globalThis.__anglibotMongoPromise = null;
         isDbReady = false;
         console.error('MongoDB connection error:', err);
         throw err;
+      } finally {
+        globalThis.__anglibotMongoPromise = null;
       }
     })().finally(() => {
       initPromise = null;

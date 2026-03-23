@@ -803,18 +803,33 @@ const AdminLoginWrapper: React.FC<{ children: React.ReactNode; isDark: boolean }
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (isAuthenticated) {
     return <>{children}</>;
   }
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (username === 'admi' && password === '123admin') {
+    setIsSubmitting(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: 'Kredencialet e gabuara' }));
+        throw new Error(data.error || 'Kredencialet e gabuara');
+      }
+
       setIsAuthenticated(true);
       setError('');
-    } else {
-      setError('Kredencialet e gabuara');
+    } catch (err: any) {
+      setError(err.message || 'Kredencialet e gabuara');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -842,8 +857,8 @@ const AdminLoginWrapper: React.FC<{ children: React.ReactNode; isDark: boolean }
             />
           </div>
           {error && <p className="text-red-500 text-sm font-bold">{error}</p>}
-          <button type="submit" className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-colors">
-            Hyr
+          <button type="submit" disabled={isSubmitting} className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-colors disabled:opacity-60">
+            {isSubmitting ? 'Duke hyrë...' : 'Hyr'}
           </button>
         </form>
       </div>
