@@ -40,11 +40,11 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Mongoose Models
 mongoose.set('bufferCommands', false);
-const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({ id: String, email: String }, { strict: false }));
-const Dialogue = mongoose.models.Dialogue || mongoose.model('Dialogue', new mongoose.Schema({ id: String }, { strict: false }));
-const Animation = mongoose.models.Animation || mongoose.model('Animation', new mongoose.Schema({ id: String }, { strict: false }));
-const Suggestion = mongoose.models.Suggestion || mongoose.model('Suggestion', new mongoose.Schema({ id: String }, { strict: false }));
-const LoginLog = mongoose.models.LoginLog || mongoose.model('LoginLog', new mongoose.Schema({ id: String }, { strict: false }));
+const User = mongoose.models.User || mongoose.model<any>('User', new mongoose.Schema({ id: String, email: String }, { strict: false }));
+const Dialogue = mongoose.models.Dialogue || mongoose.model<any>('Dialogue', new mongoose.Schema({ id: String }, { strict: false }));
+const Animation = mongoose.models.Animation || mongoose.model<any>('Animation', new mongoose.Schema({ id: String }, { strict: false }));
+const Suggestion = mongoose.models.Suggestion || mongoose.model<any>('Suggestion', new mongoose.Schema({ id: String }, { strict: false }));
+const LoginLog = mongoose.models.LoginLog || mongoose.model<any>('LoginLog', new mongoose.Schema({ id: String }, { strict: false }));
 
 // Initialize AI and DB lazily
 async function initServices() {
@@ -329,7 +329,7 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
         parts: [{ text: msg.text }]
       })),
     });
-    const result = await chat.sendMessage(message);
+    const result = await chat.sendMessage({ message });
     res.json({ text: result.text });
   } catch (error: any) {
     console.error('AI Chat Error:', error);
