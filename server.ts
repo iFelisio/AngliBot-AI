@@ -1,6 +1,5 @@
 import express from 'express';
 import { createServer } from 'http';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
@@ -10,7 +9,6 @@ import session from 'express-session';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
-import { v2 as cloudinary } from 'cloudinary';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 
 declare module 'express-session' {
@@ -48,31 +46,61 @@ let logs: any[] = [];
 // Initialize AI lazily
 async function initServices() {
   if (!ai) {
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY || '' });
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    if (GEMINI_API_KEY) {
+      try {
+        ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+      } catch (e) {
+        console.error("Failed to initialize AI:", e);
+      }
+    } else {
+      console.warn("GEMINI_API_KEY or VITE_GEMINI_API_KEY is missing. AI features will be disabled.");
+    }
   }
 }
 
 // Cloudinary configuration
-if (process.env.CLOUDINARY_CLOUD_NAME) {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-  });
+let cloudinary: any = null;
+try {
+  // We use dynamic import to avoid top-level crash if CLOUDINARY_URL is invalid
+  const cloudinaryModule = await import('cloudinary');
+  cloudinary = cloudinaryModule.v2;
+  if (process.env.CLOUDINARY_CLOUD_NAME) {
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    });
+  }
+} catch (e) {
+  console.error("Failed to initialize Cloudinary:", e);
 }
 
 // Multer setup
 let storage;
-if (process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME) {
-  storage = new CloudinaryStorage({
-    cloudinary: cloudinary,
-    params: {
-      folder: 'anglibot',
-      resource_type: 'auto'
-    } as any,
-  });
-} else {
+try {
+  if (cloudinary && (process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME)) {
+    storage = new CloudinaryStorage({
+      cloudinary: cloudinary,
+      params: {
+        folder: 'anglibot',
+        resource_type: 'auto'
+      } as any,
+    });
+  } else {
+    storage = multer.diskStorage({
+      destination: (req, file, cb) => {
+        cb(null, uploadsDir);
+      },
+      filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, `${uuidv4()}${ext}`);
+      },
+    });
+  }
+} catch (err) {
+  console.error("Failed to configure Cloudinary storage:", err);
+  // Fallback to disk storage if Cloudinary fails
   storage = multer.diskStorage({
     destination: (req, file, cb) => {
       cb(null, uploadsDir);
@@ -97,8 +125,8 @@ app.use(
     resave: false,
     saveUninitialized: true,
     cookie: { 
-      secure: isVercel, 
-      sameSite: 'lax',
+      secure: true, 
+      sameSite: 'none',
       httpOnly: true 
     },
   })
@@ -199,7 +227,7 @@ app.post('/api/auth/logout', (req, res) => {
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
   
-  if (process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME) {
+  if (cloudinary && (process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME)) {
     res.json({ url: req.file.path });
   } else {
     const url = `${APP_URL}/uploads/${req.file.filename}`;
@@ -303,13 +331,14 @@ app.delete('/api/logs', requireAuth, async (req, res) => {
 app.get('/api/config/status', (req, res) => {
   res.json({
     SESSION_SECRET: !!process.env.SESSION_SECRET,
-    GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
+    GEMINI_API_KEY: !!(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY),
     APP_URL: !!process.env.APP_URL,
     CLOUDINARY: !!(process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME),
   });
 });
 
 app.post('/api/ai/chat', requireAuth, async (req, res) => {
+  if (!ai) return res.status(500).json({ error: 'AI is not configured. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY.' });
   const { message, proficiency, history } = req.body;
   try {
     const chat = ai.chats.create({
@@ -331,6 +360,7 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
 });
 
 app.post('/api/ai/generate', requireAuth, async (req, res) => {
+  if (!ai) return res.status(500).json({ error: 'AI is not configured. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY.' });
   const { prompt, config, model } = req.body;
   try {
     const result = await ai.models.generateContent({
@@ -358,15 +388,19 @@ app.use((err: any, req: any, res: any, next: any) => {
 // Vite Dev Server / Static Files
 if (!isVercel) {
   const PORT = 3000;
-  createViteServer({
-    server: { middlewareMode: true },
-    appType: 'spa',
-    root: process.cwd(),
-  }).then((vite) => {
-    app.use(vite.middlewares);
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Server running on http://localhost:${PORT}`);
+  import('vite').then(({ createServer: createViteServer }) => {
+    createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+      root: process.cwd(),
+    }).then((vite) => {
+      app.use(vite.middlewares);
+      app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+      });
     });
+  }).catch(err => {
+    console.error('Failed to load vite:', err);
   });
 }
 
