@@ -62,15 +62,20 @@ async function initServices() {
 // Cloudinary configuration
 let cloudinary: any = null;
 try {
-  // We use dynamic import to avoid top-level crash if CLOUDINARY_URL is invalid
-  const cloudinaryModule = await import('cloudinary');
-  cloudinary = cloudinaryModule.v2;
-  if (process.env.CLOUDINARY_CLOUD_NAME) {
-    cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET,
-    });
+  // Validate CLOUDINARY_URL before importing to prevent protocol errors
+  if (process.env.CLOUDINARY_URL && !process.env.CLOUDINARY_URL.startsWith('cloudinary://')) {
+    console.warn("⚠️ Paralajmërim: CLOUDINARY_URL është e pasaktë. Duhet të fillojë me 'cloudinary://'. Fotot do të ruhen lokalisht.");
+  } else {
+    // We use dynamic import to avoid top-level crash if CLOUDINARY_URL is invalid
+    const cloudinaryModule = await import('cloudinary');
+    cloudinary = cloudinaryModule.v2;
+    if (process.env.CLOUDINARY_CLOUD_NAME) {
+      cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET,
+      });
+    }
   }
 } catch (e) {
   console.error("Failed to initialize Cloudinary:", e);

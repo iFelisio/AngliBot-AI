@@ -110,7 +110,7 @@ const App: React.FC = () => {
 
   const isDarkTheme = theme === 'dark' || (theme === 'default' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-  const isConfigured = configStatus && (configStatus.GEMINI_API_KEY && configStatus.SESSION_SECRET);
+  const isConfigured = configStatus && configStatus.GEMINI_API_KEY;
 
   if (globalError) {
     return (
