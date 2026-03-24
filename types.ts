@@ -37,6 +37,15 @@ export interface Suggestion {
   adminResponse?: string;
 }
 
+declare global {
+  interface Window {
+    aistudio?: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
+
 export interface LoginEvent {
   id: string;
   userId: string;

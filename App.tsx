@@ -50,8 +50,13 @@ const App: React.FC = () => {
     // Initial fetch
     const fetchData = async () => {
       try {
-        const [me, users, dialogues, animations, suggestions, logs, config] = await Promise.all([
-          safeFetch('/api/auth/me'),
+        const me = await safeFetch('/api/auth/me');
+        if (me.ok) {
+          setCurrentUser(me.data);
+          localStorage.setItem('anglibot_user', JSON.stringify(me.data));
+        }
+
+        const [users, dialogues, animations, suggestions, logs, config] = await Promise.all([
           safeFetch('/api/users'),
           safeFetch('/api/dialogues'),
           safeFetch('/api/animations'),
@@ -60,7 +65,6 @@ const App: React.FC = () => {
           safeFetch('/api/config/status')
         ]);
 
-        if (me.ok) setCurrentUser(me.data);
         if (users.ok) setAllUsers(users.data);
         if (dialogues.ok) setDialogues(dialogues.data);
         if (animations.ok) setAnimations(animations.data);
@@ -83,7 +87,7 @@ const App: React.FC = () => {
   }, []);
 
   const safeFetch = async (url: string, options?: RequestInit) => {
-    const res = await fetch(url, options);
+    const res = await fetch(url, { ...options, credentials: 'include' });
     const text = await res.text();
     let data;
     try {
@@ -97,7 +101,7 @@ const App: React.FC = () => {
   const addPoints = async (pts: number) => {
     if (!currentUser) return;
     const newPoints = (currentUser.points || 0) + pts;
-    const res = await fetch(`/api/users/${currentUser.id}`, {
+    const res = await safeFetch(`/api/users/${currentUser.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ points: newPoints })
@@ -228,7 +232,7 @@ const App: React.FC = () => {
                 <Route path="/chat" element={<ChatView level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
                 <Route path="/streak" element={<StreakView user={currentUser} isDark={isDarkTheme} />} />
                 <Route path="/suggestions" element={<SuggestionsView suggestions={suggestions} onAdd={async text => {
-                  await fetch('/api/suggestions', {
+                  await safeFetch('/api/suggestions', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ userId: currentUser.id, userName: currentUser.name || currentUser.displayName || 'Përdorues', text })
@@ -244,17 +248,17 @@ const App: React.FC = () => {
                         loginLogs={loginLogs} 
                         dialogues={dialogues} 
                         animations={animations} 
-                        onDialogueAdd={async d => { await fetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }); }} 
-                        onDialogueRemove={async id => { await fetch(`/api/dialogues/${id}`, { method: 'DELETE' }); }} 
-                        onClearDialogues={async () => { for (const d of dialogues) { await fetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); } }}
-                        onAnimationAdd={async a => { await fetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }); }} 
-                        onAnimationRemove={async id => { await fetch(`/api/animations/${id}`, { method: 'DELETE' }); }} 
-                        onMakeAdmin={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) }); }} 
-                        onRespondSuggestion={async (id, msg) => { await fetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) }); }} 
-                        onClearLogs={async () => { await fetch('/api/logs', { method: 'DELETE' }); }} 
-                        onDeleteUser={async id => { await fetch(`/api/users/${id}`, { method: 'DELETE' }); }} 
-                        onClearScoreboard={async () => { for (const u of allUsers) { if (u.points > 0) { await fetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } } }} 
-                        onResetUserScore={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); }} 
+                        onDialogueAdd={async d => { await safeFetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }); }} 
+                        onDialogueRemove={async id => { await safeFetch(`/api/dialogues/${id}`, { method: 'DELETE' }); }} 
+                        onClearDialogues={async () => { for (const d of dialogues) { await safeFetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); } }}
+                        onAnimationAdd={async a => { await safeFetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }); }} 
+                        onAnimationRemove={async id => { await safeFetch(`/api/animations/${id}`, { method: 'DELETE' }); }} 
+                        onMakeAdmin={async id => { await safeFetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) }); }} 
+                        onRespondSuggestion={async (id, msg) => { await safeFetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) }); }} 
+                        onClearLogs={async () => { await safeFetch('/api/logs', { method: 'DELETE' }); }} 
+                        onDeleteUser={async id => { await safeFetch(`/api/users/${id}`, { method: 'DELETE' }); }} 
+                        onClearScoreboard={async () => { for (const u of allUsers) { if (u.points > 0) { await safeFetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } } }} 
+                        onResetUserScore={async id => { await safeFetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); }} 
                         isDark={isDarkTheme} 
                       />
                     </AdminLoginWrapper>
@@ -782,13 +786,26 @@ const AdminLoginWrapper: React.FC<{ children: React.ReactNode; isDark: boolean }
     return <>{children}</>;
   }
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (username === 'admin' && password === '123admin') {
-      setIsAuthenticated(true);
-      setError('');
-    } else {
-      setError('Kredencialet e gabuara');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      if (res.ok) {
+        const user = await res.json();
+        localStorage.setItem('anglibot_user', JSON.stringify(user));
+        setIsAuthenticated(true);
+        setError('');
+        window.location.reload();
+      } else {
+        const data = await res.json();
+        setError(data.error || 'Kredencialet e gabuara');
+      }
+    } catch (err) {
+      setError('Gabim në lidhje me serverin');
     }
   };
 
@@ -876,14 +893,16 @@ const AdminView: React.FC<{
     const formData = new FormData();
     formData.append('file', file);
     
-    const res = await fetch('/api/upload', {
+    const res = await safeFetch('/api/upload', {
       method: 'POST',
       body: formData
     });
     
-    if (!res.ok) throw new Error("Upload failed");
-    const data = await res.json();
-    return data.url;
+    if (!res.ok) {
+      const errorMsg = res.data?.error || res.data?.details || res.data || 'Unknown error';
+      throw new Error(`Upload failed (${res.status}): ${JSON.stringify(errorMsg)}`);
+    }
+    return res.data.url;
   };
 
   const handlePublishDialogue = async () => {

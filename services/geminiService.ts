@@ -20,14 +20,35 @@ const recentSentences: string[] = [];
 
 const callBackendAI = async (endpoint: string, body: any) => {
   try {
+    const headers: any = { 'Content-Type': 'application/json' };
+    const storedUser = localStorage.getItem('anglibot_user');
+    if (storedUser) {
+      try {
+        const user = JSON.parse(storedUser);
+        headers['x-user-id'] = user.id;
+      } catch (e) {}
+    }
+
     const response = await fetch(`/api/ai/${endpoint}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
+      credentials: 'include',
       body: JSON.stringify(body),
     });
+    
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'AI request failed');
+      const errorText = await response.text();
+      let errorData;
+      try { errorData = JSON.parse(errorText); } catch(e) { errorData = { error: errorText }; }
+      
+      if (response.status === 401 && errorData.error === 'INVALID_API_KEY') {
+        if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+          await window.aistudio.openSelectKey();
+          throw new Error('Ju lutem zgjidhni një API Key të vlefshme dhe provoni përsëri.');
+        }
+      }
+      
+      throw new Error(`HTTP ${response.status}: ${errorData.error || errorData.details || errorText}`);
     }
     return await response.json();
   } catch (error: any) {

@@ -5,15 +5,15 @@ import fs from 'fs';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import cookieParser from 'cookie-parser';
-import session from 'express-session';
+import cookieSession from 'cookie-session';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 
-declare module 'express-session' {
-  interface SessionData {
-    user: any;
+declare module 'express' {
+  interface Request {
+    session?: any;
   }
 }
 
@@ -23,6 +23,7 @@ const app = express();
 app.set('trust proxy', 1);
 
 let ai: any = null;
+const FREE_GEMINI_MODEL = 'gemini-1.5-flash';
 
 // Vercel specific paths
 const isVercel = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
@@ -44,18 +45,16 @@ let suggestions: any[] = [];
 let logs: any[] = [];
 
 // Initialize AI lazily
-async function initServices() {
-  if (!ai) {
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-    if (GEMINI_API_KEY) {
-      try {
-        ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-      } catch (e) {
-        console.error("Failed to initialize AI:", e);
-      }
-    } else {
-      console.warn("GEMINI_API_KEY or VITE_GEMINI_API_KEY is missing. AI features will be disabled.");
+async function initServices() 
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  if (GEMINI_API_KEY) {
+    try {
+      ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+    } catch (e) {
+      console.error("Failed to initialize AI:", e);
     }
+  } else {
+    console.warn("API_KEY or GEMINI_API_KEY is missing. AI features will be disabled.");
   }
 }
 
@@ -120,20 +119,22 @@ const upload = multer({ storage });
 const APP_URL = process.env.APP_URL || `http://localhost:3000`;
 
 // Middleware
-app.use(cors());
+app.set('trust proxy', 1);
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 app.use(express.json());
 app.use(cookieParser());
 
 app.use(
-  session({
-    secret: process.env.SESSION_SECRET || 'anglibot-secret',
-    resave: false,
-    saveUninitialized: true,
-    cookie: { 
-      secure: true, 
-      sameSite: 'none',
-      httpOnly: true 
-    },
+  cookieSession({
+    name: 'session',
+    keys: [process.env.SESSION_SECRET || 'anglibot-secret'],
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    secure: true,
+    sameSite: 'none',
+    httpOnly: true 
   })
 );
 
@@ -149,11 +150,21 @@ app.get('/api/health', (req, res) => {
 // API Routes
 const requireAuth = async (req: any, res: any, next: any) => {
   await initServices();
-  if (req.session.user) {
-    next();
-  } else {
-    res.status(401).json({ error: 'Unauthorized' });
+  const userId = req.headers['x-user-id'];
+  if (userId) {
+    const user = users.find(u => u.id === userId);
+    if (user) {
+      req.session = req.session || {};
+      req.session.user = user;
+      return next();
+    }
   }
+
+  if (req.session?.user) {
+    return next();
+  }
+  
+  res.status(401).json({ error: 'Unauthorized: No valid session or x-user-id header provided.' });
 };
 
 app.use('/uploads', express.static(uploadsDir));
@@ -200,7 +211,18 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', async (req: any, res) => {
   await initServices();
-  if (!req.session.user) {
+  
+  const userId = req.headers['x-user-id'];
+  if (userId) {
+    const user = users.find(u => u.id === userId);
+    if (user) {
+      req.session = req.session || {};
+      req.session.user = user;
+      return res.json(user);
+    }
+  }
+
+  if (!req.session?.user) {
     let user = users.find(u => u.email === 'admin@anglibot.ai');
     if (!user) {
       user = {
@@ -224,13 +246,19 @@ app.get('/api/auth/me', async (req: any, res) => {
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  req.session.destroy(() => {
-    res.json({ success: true });
-  });
+  req.session = null;
+  res.json({ success: true });
 });
 
-app.post('/api/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file' });
+app.post('/api/upload', (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ error: 'Multer error', details: err.message });
+    }
+    next();
+  });
+}, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded. Make sure the field name is "file".' });
   
   if (cloudinary && (process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME)) {
     res.json({ url: req.file.path });
@@ -337,16 +365,25 @@ app.get('/api/config/status', (req, res) => {
   res.json({
     SESSION_SECRET: !!process.env.SESSION_SECRET,
     GEMINI_API_KEY: !!(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY),
-    APP_URL: !!process.env.APP_URL,
+    AI_AVAILABLE: !!(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY),
     CLOUDINARY: !!(process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME),
   });
 });
 
 app.post('/api/ai/chat', requireAuth, async (req, res) => {
-  if (!ai) return res.status(500).json({ error: 'AI is not configured. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY.' });
+  const GEMINI_API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  if (!GEMINI_API_KEY) return res.status(500).json({ error: 'AI is not configured. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY.' });
+  
+  let localAi;
+  try {
+    localAi = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to initialize AI' });
+  }
+
   const { message, proficiency, history } = req.body;
   try {
-    const chat = ai.chats.create({
+    const chat = localAi.chats.create({
       model: 'gemini-3.1-pro-preview',
       config: {
         systemInstruction: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdoruesin të flasë Anglisht. Je miqësor, edukativ dhe kreativ në shembujt që jep.`,
@@ -360,15 +397,27 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
     res.json({ text: result.text });
   } catch (error: any) {
     console.error('AI Chat Error:', error);
+    if (error.message?.includes('API key not valid') || error.message?.includes('API_KEY_INVALID')) {
+      return res.status(401).json({ error: 'INVALID_API_KEY', details: error.message });
+    }
     res.status(500).json({ error: error.message });
   }
 });
 
 app.post('/api/ai/generate', requireAuth, async (req, res) => {
-  if (!ai) return res.status(500).json({ error: 'AI is not configured. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY.' });
+  const GEMINI_API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  if (!GEMINI_API_KEY) return res.status(500).json({ error: 'AI is not configured. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY.' });
+  
+  let localAi;
+  try {
+    localAi = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to initialize AI' });
+  }
+
   const { prompt, config, model } = req.body;
   try {
-    const result = await ai.models.generateContent({
+    const result = await localAi.models.generateContent({
       model: model || 'gemini-3-flash-preview',
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config
@@ -376,6 +425,9 @@ app.post('/api/ai/generate', requireAuth, async (req, res) => {
     res.json({ text: result.text });
   } catch (error: any) {
     console.error('AI Generate Error:', error);
+    if (error.message?.includes('API key not valid') || error.message?.includes('API_KEY_INVALID')) {
+      return res.status(401).json({ error: 'INVALID_API_KEY', details: error.message });
+    }
     res.status(500).json({ error: error.message });
   }
 });
