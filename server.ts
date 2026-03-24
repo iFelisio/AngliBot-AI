@@ -12,7 +12,17 @@ import { GoogleGenAI } from '@google/genai';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where, getDoc, setDoc, deleteField } from 'firebase/firestore';
-import firebaseConfig from './firebase-applet-config.json';
+
+// Load Firebase config safely for ESM
+const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
+let firebaseConfig: any = {};
+try {
+  if (fs.existsSync(firebaseConfigPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
+  }
+} catch (err) {
+  console.error('Failed to load firebase-applet-config.json:', err);
+}
 
 declare module 'express' {
   interface Request {
@@ -58,14 +68,17 @@ async function testFirestore() {
     await getDocFromServer(doc(db, 'config', 'connection_test'));
     console.log('✅ Firestore connection verified.');
   } catch (error: any) {
+    // We don't want to crash the server if the test fails
     if (error.message?.includes('the client is offline')) {
       console.error('❌ Firestore is offline. Check your Firebase configuration.');
     } else {
-      console.log('ℹ️ Firestore connection test completed (may fail if collection doesn\'t exist, which is fine).');
+      console.log('ℹ️ Firestore connection test completed.');
     }
   }
 }
-testFirestore();
+
+// Run test but catch any top-level errors to prevent crash
+testFirestore().catch(err => console.error('Firestore test error:', err));
 
 // Initialize AI lazily
 async function initServices() {
