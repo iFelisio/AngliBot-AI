@@ -107,7 +107,7 @@ const App: React.FC = () => {
       body: JSON.stringify({ points: newPoints })
     });
     if (res.ok) {
-      const updated = await res.json();
+      const updated = res.data;
       setCurrentUser(updated);
     }
   };
@@ -176,6 +176,7 @@ const App: React.FC = () => {
               <NavLink to="/" icon="language" isDark={isDarkTheme}>Përkthimi</NavLink>
               <NavLink to="/chat" icon="comment-dots" isDark={isDarkTheme}>Bisedo me AI</NavLink>
               <NavLink to="/dialogues" icon="book-open" isDark={isDarkTheme}>Dialogjet</NavLink>
+              <NavLink to="/animations" icon="film" isDark={isDarkTheme}>Animacionet</NavLink>
               <NavLink to="/games" icon="gamepad" isDark={isDarkTheme}>Lojërat</NavLink>
               <NavLink to="/leaderboard" icon="trophy" isDark={isDarkTheme}>Renditja</NavLink>
               <NavLink to="/streak" icon="fire" isDark={isDarkTheme}>Streak</NavLink>
@@ -227,6 +228,7 @@ const App: React.FC = () => {
               <Routes>
                 <Route path="/" element={<PerkthimView onTranslate={() => addPoints(5)} isDark={isDarkTheme} />} />
                 <Route path="/dialogues" element={<DialoguesView dialogues={dialogues} level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
+                <Route path="/animations" element={<AnimationsView animations={animations} isDark={isDarkTheme} />} />
                 <Route path="/games" element={<GamesView onWin={addPoints} level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
                 <Route path="/leaderboard" element={<LeaderboardView users={allUsers} isDark={isDarkTheme} />} />
                 <Route path="/chat" element={<ChatView level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
@@ -470,22 +472,73 @@ const DialoguesView: React.FC<{ dialogues: Dialogue[]; level: Proficiency; isDar
             </div>
 
             {selected.videoData && (
-              <div className="mb-8 rounded-3xl overflow-hidden shadow-2xl border border-zinc-200">
-                <video src={selected.videoData} controls className="w-full" />
+              <div className="mb-8 p-8 rounded-3xl bg-indigo-50 dark:bg-zinc-800/50 border border-indigo-100 dark:border-zinc-700 text-center">
+                <i className="fas fa-film text-4xl text-indigo-500 mb-4"></i>
+                <h4 className="font-bold mb-4">Shiko Animacionin në Google Drive</h4>
+                <a 
+                  href={selected.videoData} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg"
+                >
+                  <i className="fab fa-google-drive"></i> Hap Animacionin
+                </a>
               </div>
             )}
 
             {selected.audioData && (
-              <div className={`p-6 rounded-3xl flex items-center gap-4 ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
-                <div className="w-12 h-12 rounded-full bg-black flex items-center justify-center text-white">
-                  <i className="fas fa-play"></i>
-                </div>
-                <audio src={selected.audioData} controls className="flex-1" />
+              <div className="p-8 rounded-3xl bg-emerald-50 dark:bg-zinc-800/50 border border-emerald-100 dark:border-zinc-700 text-center">
+                <i className="fas fa-headphones text-4xl text-emerald-500 mb-4"></i>
+                <h4 className="font-bold mb-4">Dëgjo Audion në Google Drive</h4>
+                <a 
+                  href={selected.audioData} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg"
+                >
+                  <i className="fab fa-google-drive"></i> Hap Audion
+                </a>
               </div>
             )}
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+const AnimationsView: React.FC<{ animations: AnimationMedia[]; isDark: boolean }> = ({ animations, isDark }) => {
+  return (
+    <div className="space-y-8 animate-in fade-in duration-700">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-black tracking-tight">Animacionet</h1>
+          <p className="text-zinc-500 font-medium">Shikoni animacionet tona edukative.</p>
+        </div>
+        <div className={`px-4 py-2 rounded-xl text-xs font-bold ${isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>
+          {animations.length} Animacione
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {animations.map(a => (
+          <a 
+            key={a.id} 
+            href={a.videoData}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`p-6 rounded-[28px] text-left border transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg hover:shadow-xl flex items-center gap-4 ${isDark ? 'bg-zinc-900 border-zinc-800 hover:bg-zinc-800' : 'bg-white border-white hover:border-zinc-100'}`}
+          >
+            <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600">
+              <i className="fas fa-film text-xl"></i>
+            </div>
+            <div>
+              <h3 className="font-bold text-lg">{a.title}</h3>
+              <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest">Hap në Google Drive</p>
+            </div>
+          </a>
+        ))}
+      </div>
     </div>
   );
 };
@@ -883,82 +936,43 @@ const AdminView: React.FC<{
   const [newD, setNewD] = useState({ title: '', content: '', level: 'Beginner' as Proficiency, audioData: '', videoData: '' });
   const [newAnim, setNewAnim] = useState({ title: '', videoData: '' });
   
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [animVideoFile, setAnimVideoFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-
-  const uploadFile = async (file: File): Promise<string> => {
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    const res = await safeFetch('/api/upload', {
-      method: 'POST',
-      body: formData
-    });
-    
-    if (!res.ok) {
-      const errorMsg = res.data?.error || res.data?.details || res.data || 'Unknown error';
-      throw new Error(`Upload failed (${res.status}): ${JSON.stringify(errorMsg)}`);
-    }
-    return res.data.url;
-  };
 
   const handlePublishDialogue = async () => {
     setIsUploading(true);
-    setUploadProgress(0);
     try {
-      let finalAudioData = newD.audioData;
-      let finalVideoData = newD.videoData;
-
-      if (audioFile) finalAudioData = await uploadFile(audioFile);
-      if (videoFile) finalVideoData = await uploadFile(videoFile);
-
       await onDialogueAdd({ 
         id: Date.now().toString(), 
         ...newD, 
-        audioData: finalAudioData,
-        videoData: finalVideoData,
         addedBy: 'Admin' 
       });
       
       setNewD({title:'', content:'', level:'Beginner', audioData:'', videoData:''}); 
-      setAudioFile(null);
-      setVideoFile(null);
       alert("U publikua me sukses!");
     } catch (error: any) {
-      console.error("Error uploading files:", error);
-      alert(`Gabim gjatë ngarkimit: ${error.message}`);
+      console.error("Error adding dialogue:", error);
+      alert(`Gabim: ${error.message}`);
     } finally {
       setIsUploading(false);
-      setUploadProgress(0);
     }
   };
 
   const handlePublishAnimation = async () => {
     setIsUploading(true);
-    setUploadProgress(0);
     try {
-      let finalVideoData = newAnim.videoData;
-      if (animVideoFile) finalVideoData = await uploadFile(animVideoFile);
-
       await onAnimationAdd({ 
         id: Date.now().toString(), 
         ...newAnim, 
-        videoData: finalVideoData,
         addedBy: 'Admin' 
       });
       
       setNewAnim({title:'', videoData:''}); 
-      setAnimVideoFile(null);
       alert("Animacioni u publikua me sukses!");
     } catch (error: any) {
-      console.error("Error uploading files:", error);
-      alert(`Gabim gjatë ngarkimit: ${error.message}`);
+      console.error("Error adding animation:", error);
+      alert(`Gabim: ${error.message}`);
     } finally {
       setIsUploading(false);
-      setUploadProgress(0);
     }
   };
 
@@ -1011,12 +1025,12 @@ const AdminView: React.FC<{
             </select>
             <textarea className="w-full h-40 p-4 border rounded-2xl outline-none" placeholder="Teksti i bisedës" value={newD.content} onChange={e => setNewD({...newD, content: e.target.value})} />
             <div>
-              <label className="block text-xs font-bold mb-1">Audio (Ngarko Skedar)</label>
-              <input type="file" accept="audio/*" onChange={e => setAudioFile(e.target.files?.[0] || null)} />
+              <label className="block text-xs font-bold mb-1">Linku i Audios (Google Drive)</label>
+              <input className="w-full p-4 border rounded-2xl outline-none" placeholder="https://drive.google.com/..." value={newD.audioData} onChange={e => setNewD({...newD, audioData: e.target.value})} />
             </div>
             <div>
-              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar)</label>
-              <input type="file" accept="video/mp4,video/*" onChange={e => setVideoFile(e.target.files?.[0] || null)} />
+              <label className="block text-xs font-bold mb-1">Linku i Animacionit (Google Drive)</label>
+              <input className="w-full p-4 border rounded-2xl outline-none" placeholder="https://drive.google.com/..." value={newD.videoData} onChange={e => setNewD({...newD, videoData: e.target.value})} />
             </div>
             <button 
               onClick={handlePublishDialogue} 
@@ -1051,8 +1065,8 @@ const AdminView: React.FC<{
             <h3 className="font-bold text-lg">Shto Animacion të Ri</h3>
             <input className="w-full p-4 border rounded-2xl outline-none" placeholder="Titulli i Animacionit" value={newAnim.title} onChange={e => setNewAnim({...newAnim, title: e.target.value})} />
             <div>
-              <label className="block text-xs font-bold mb-1">Video MP4 (Ngarko Skedar)</label>
-              <input type="file" accept="video/mp4,video/*" onChange={e => setAnimVideoFile(e.target.files?.[0] || null)} />
+              <label className="block text-xs font-bold mb-1">Linku i Animacionit (Google Drive)</label>
+              <input className="w-full p-4 border rounded-2xl outline-none" placeholder="https://drive.google.com/..." value={newAnim.videoData} onChange={e => setNewAnim({...newAnim, videoData: e.target.value})} />
             </div>
             <button 
               onClick={handlePublishAnimation} 

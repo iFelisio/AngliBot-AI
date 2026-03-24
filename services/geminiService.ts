@@ -84,7 +84,7 @@ export const processContent = async (content: string, task: string, isComplex: b
     const prompt = `Task: ${task}\n\nContent: ${content}\n\nProvide a high-quality response based on the task and content.`;
     const result = await callBackendAI('generate', { 
       prompt, 
-      model: isComplex ? 'gemini-3.1-pro-preview' : 'gemini-3-flash-preview' 
+      model: 'gemini-2.5-flash-latest' 
     });
     return result.text;
   } catch (error: any) {

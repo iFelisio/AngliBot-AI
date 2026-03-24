@@ -23,7 +23,6 @@ const app = express();
 app.set('trust proxy', 1);
 
 let ai: any = null;
-const FREE_GEMINI_MODEL = 'gemini-1.5-flash';
 
 // Vercel specific paths
 const isVercel = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
@@ -45,8 +44,8 @@ let suggestions: any[] = [];
 let logs: any[] = [];
 
 // Initialize AI lazily
-async function initServices() 
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+async function initServices() {
+  const GEMINI_API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
   if (GEMINI_API_KEY) {
     try {
       ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
@@ -365,7 +364,7 @@ app.get('/api/config/status', (req, res) => {
   res.json({
     SESSION_SECRET: !!process.env.SESSION_SECRET,
     GEMINI_API_KEY: !!(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY),
-    AI_AVAILABLE: !!(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY),
+    APP_URL: !!process.env.APP_URL,
     CLOUDINARY: !!(process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME),
   });
 });
@@ -384,7 +383,7 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
   const { message, proficiency, history } = req.body;
   try {
     const chat = localAi.chats.create({
-      model: 'gemini-3.1-pro-preview',
+      model: 'gemini-2.5-flash-latest',
       config: {
         systemInstruction: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdoruesin të flasë Anglisht. Je miqësor, edukativ dhe kreativ në shembujt që jep.`,
       },
@@ -418,7 +417,7 @@ app.post('/api/ai/generate', requireAuth, async (req, res) => {
   const { prompt, config, model } = req.body;
   try {
     const result = await localAi.models.generateContent({
-      model: model || 'gemini-3-flash-preview',
+      model: model || 'gemini-2.5-flash-latest',
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config
     });
