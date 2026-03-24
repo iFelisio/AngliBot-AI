@@ -44,54 +44,136 @@ const App: React.FC = () => {
   const [configStatus, setConfigStatus] = useState<any>(null);
   const location = useLocation();
 
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  useEffect(() => {
-    // Initial fetch
-    const fetchData = async () => {
-      try {
-        const [me, users, dialogues, animations, suggestions, logs, config] = await Promise.all([
-          safeFetch('/api/auth/me'),
-          safeFetch('/api/users'),
-          safeFetch('/api/dialogues'),
-          safeFetch('/api/animations'),
-          safeFetch('/api/suggestions'),
-          safeFetch('/api/logs'),
-          safeFetch('/api/config/status')
-        ]);
+  const normalizeErrorMessage = (message?: string) => {
+    const fallback = 'Shërbimi është përkohësisht i padisponueshëm. Ju lutem provoni sërish pas pak.';
+    if (!message) return fallback;
 
-        if (me.ok) setCurrentUser(me.data);
-        if (users.ok) setAllUsers(users.data);
-        if (dialogues.ok) setDialogues(dialogues.data);
-        if (animations.ok) setAnimations(animations.data);
-        if (suggestions.ok) setSuggestions(suggestions.data);
-        if (logs.ok) setLoginLogs(logs.data);
-        if (config.ok) setConfigStatus(config.data);
-        
-        // If any critical ones failed with non-auth errors
-        const criticalErrors = [me, config].filter(r => !r.ok && r.status !== 401);
-        if (criticalErrors.length > 0) {
-          setGlobalError(`Gabim në rrjet: ${criticalErrors[0].data.error || 'Dështim i panjohur'}`);
-        }
-      } catch (e: any) {
-        console.error("Error fetching initial data", e);
-        setGlobalError(`Gabim në rrjet: ${e.message || 'Dështim i panjohur'}`);
-      }
-    };
+    if (message.includes('Database connection timed out')) {
+      return 'Serveri po vonohet teksa lidhet me databazën. Kontrollo MONGODB_URI në Vercel ose provo sërish pas pak.';
+    }
 
-    fetchData();
-  }, []);
+    if (message.includes('FUNCTION_INVOCATION_FAILED') || message.includes('A server error has occurred')) {
+      return 'Serveri u ndërpre gjatë përpunimit të kërkesës. Rifresko faqen ose provo sërish pas pak.';
+    }
+
+    if (message.includes('Database temporarily unavailable') || message.includes('Database not connected')) {
+      return 'Lidhja me databazën dështoi në server. Kontrollo MONGODB_URI në Vercel dhe provo sërish.';
+    }
+
+    if (message.includes('<!doctype html') || message.includes('<html')) {
+      return fallback;
+    }
+
+    return message;
+  };
 
   const safeFetch = async (url: string, options?: RequestInit) => {
-    const res = await fetch(url, options);
-    const text = await res.text();
-    let data;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+
     try {
-      data = JSON.parse(text);
-    } catch (e) {
-      data = { error: text || res.statusText || 'Gabim i panjohur' };
+      const res = await fetch(url, {
+        ...options,
+        signal: options?.signal || controller.signal,
+      });
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        data = { error: normalizeErrorMessage(text || res.statusText || 'Gabim i panjohur') };
+      }
+
+      if (data?.error) {
+        data.error = normalizeErrorMessage(data.error);
+      }
+
+      if (data?.details) {
+        data.details = normalizeErrorMessage(data.details);
+      }
+
+      return { ok: res.ok, status: res.status, data };
+    } finally {
+      window.clearTimeout(timeout);
     }
-    return { ok: res.ok, status: res.status, data };
+  };
+
+  const loadBootstrap = async () => {
+    try {
+      setIsBootstrapping(true);
+      const bootstrap = await safeFetch('/api/bootstrap');
+
+      if (bootstrap.ok) {
+        setCurrentUser(bootstrap.data.currentUser || null);
+        setAllUsers(bootstrap.data.users || []);
+        setDialogues(bootstrap.data.dialogues || []);
+        setAnimations(bootstrap.data.animations || []);
+        setSuggestions(bootstrap.data.suggestions || []);
+        setLoginLogs(bootstrap.data.logs || []);
+        setConfigStatus(bootstrap.data.config || null);
+        setGlobalError(null);
+        return;
+      }
+
+      if (bootstrap.data?.config) {
+        setConfigStatus(bootstrap.data.config);
+      }
+
+      setCurrentUser(null);
+      setAllUsers([]);
+      setLoginLogs([]);
+
+      if (bootstrap.status !== 401) {
+        const messageParts = [bootstrap.data.error || 'Dështim i panjohur'];
+        if (bootstrap.data.details && bootstrap.data.details !== bootstrap.data.error) {
+          messageParts.push(bootstrap.data.details);
+        }
+        setGlobalError(`Gabim në rrjet: ${messageParts.join(' ')}`);
+      } else {
+        setGlobalError(null);
+      }
+    } catch (e: any) {
+      console.error("Error fetching initial data", e);
+      const message =
+        e?.name === 'AbortError'
+          ? 'Kërkesa po vonon shumë. Serveri mund të jetë bllokuar duke pritur databazën.'
+          : e.message || 'Dështim i panjohur';
+      setGlobalError(`Gabim në rrjet: ${normalizeErrorMessage(message)}`);
+    } finally {
+      setIsBootstrapping(false);
+    }
+  };
+
+  useEffect(() => {
+    loadBootstrap();
+  }, []);
+
+  const handleLogin = async (username: string, password: string) => {
+    try {
+      setIsLoggingIn(true);
+      setLoginError(null);
+
+      const response = await safeFetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+
+      if (!response.ok) {
+        throw new Error(response.data?.error || 'Login failed');
+      }
+
+      await loadBootstrap();
+    } catch (error: any) {
+      setLoginError(normalizeErrorMessage(error.message || 'Login failed'));
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   const addPoints = async (pts: number) => {
@@ -110,7 +192,13 @@ const App: React.FC = () => {
 
   const isDarkTheme = theme === 'dark' || (theme === 'default' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-  const isConfigured = configStatus && (configStatus.GEMINI_API_KEY && configStatus.SESSION_SECRET);
+  const requiredConfig = configStatus?.required || configStatus || {};
+  const optionalConfig = configStatus?.optional || {};
+  const isConfigured = Boolean(
+    requiredConfig.GEMINI_API_KEY &&
+    requiredConfig.SESSION_SECRET &&
+    requiredConfig.MONGODB_URI
+  );
 
   if (globalError) {
     return (
@@ -133,10 +221,10 @@ const App: React.FC = () => {
   }
 
   if (configStatus && !isConfigured) {
-    return <SetupRequiredView configStatus={configStatus} isDark={isDarkTheme} />;
+    return <SetupRequiredView configStatus={configStatus} requiredConfig={requiredConfig} optionalConfig={optionalConfig} isDark={isDarkTheme} />;
   }
 
-  if (!currentUser) {
+  if (isBootstrapping) {
     return (
       <div className={`min-h-screen flex items-center justify-center p-6 ${isDarkTheme ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-black'}`}>
         <div className={`max-w-md w-full p-10 rounded-[32px] shadow-2xl border transition-all duration-500 ${isDarkTheme ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
@@ -151,6 +239,10 @@ const App: React.FC = () => {
         </div>
       </div>
     );
+  }
+
+  if (!currentUser) {
+    return <LoginView isDark={isDarkTheme} isLoading={isLoggingIn} error={loginError} onLogin={handleLogin} />;
   }
 
   return (
@@ -237,27 +329,25 @@ const App: React.FC = () => {
                 <Route path="/settings" element={<SettingsView currentTheme={theme} onThemeChange={setTheme} isDark={isDarkTheme} />} />
                 {currentUser.isAdmin && (
                   <Route path="/admin" element={
-                    <AdminLoginWrapper isDark={isDarkTheme}>
-                      <AdminView 
-                        users={allUsers} 
-                        suggestions={suggestions} 
-                        loginLogs={loginLogs} 
-                        dialogues={dialogues} 
-                        animations={animations} 
-                        onDialogueAdd={async d => { await fetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }); }} 
-                        onDialogueRemove={async id => { await fetch(`/api/dialogues/${id}`, { method: 'DELETE' }); }} 
-                        onClearDialogues={async () => { for (const d of dialogues) { await fetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); } }}
-                        onAnimationAdd={async a => { await fetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }); }} 
-                        onAnimationRemove={async id => { await fetch(`/api/animations/${id}`, { method: 'DELETE' }); }} 
-                        onMakeAdmin={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) }); }} 
-                        onRespondSuggestion={async (id, msg) => { await fetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) }); }} 
-                        onClearLogs={async () => { await fetch('/api/logs', { method: 'DELETE' }); }} 
-                        onDeleteUser={async id => { await fetch(`/api/users/${id}`, { method: 'DELETE' }); }} 
-                        onClearScoreboard={async () => { for (const u of allUsers) { if (u.points > 0) { await fetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } } }} 
-                        onResetUserScore={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); }} 
-                        isDark={isDarkTheme} 
-                      />
-                    </AdminLoginWrapper>
+                    <AdminView 
+                      users={allUsers} 
+                      suggestions={suggestions} 
+                      loginLogs={loginLogs} 
+                      dialogues={dialogues} 
+                      animations={animations} 
+                      onDialogueAdd={async d => { await fetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }); await loadBootstrap(); }} 
+                      onDialogueRemove={async id => { await fetch(`/api/dialogues/${id}`, { method: 'DELETE' }); await loadBootstrap(); }} 
+                      onClearDialogues={async () => { for (const d of dialogues) { await fetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); } await loadBootstrap(); }}
+                      onAnimationAdd={async a => { await fetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }); await loadBootstrap(); }} 
+                      onAnimationRemove={async id => { await fetch(`/api/animations/${id}`, { method: 'DELETE' }); await loadBootstrap(); }} 
+                      onMakeAdmin={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) }); await loadBootstrap(); }} 
+                      onRespondSuggestion={async (id, msg) => { await fetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) }); await loadBootstrap(); }} 
+                      onClearLogs={async () => { await fetch('/api/logs', { method: 'DELETE' }); await loadBootstrap(); }} 
+                      onDeleteUser={async id => { await fetch(`/api/users/${id}`, { method: 'DELETE' }); await loadBootstrap(); }} 
+                      onClearScoreboard={async () => { for (const u of allUsers) { if (u.points > 0) { await fetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } } await loadBootstrap(); }} 
+                      onResetUserScore={async id => { await fetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); await loadBootstrap(); }} 
+                      isDark={isDarkTheme} 
+                    />
                   } />
                 )}
               </Routes>
@@ -302,9 +392,9 @@ const App: React.FC = () => {
 
 // --- Views ---
 
-const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ configStatus, isDark }) => {
-  const missingKeys = Object.entries(configStatus)
-    .filter(([key, value]) => !value && ['GEMINI_API_KEY', 'SESSION_SECRET'].includes(key))
+const SetupRequiredView: React.FC<{ configStatus: any; requiredConfig: Record<string, boolean>; optionalConfig: Record<string, boolean>; isDark: boolean }> = ({ configStatus, requiredConfig, optionalConfig, isDark }) => {
+  const missingKeys = Object.entries(requiredConfig)
+    .filter(([, value]) => !value)
     .map(([key]) => key);
 
   if (missingKeys.length === 0) return null;
@@ -318,12 +408,12 @@ const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ c
           </div>
           <div>
             <h1 className="text-3xl font-black tracking-tight">Konfigurimi i Nevojshëm</h1>
-            <p className="text-zinc-500 font-medium">Ju lutem plotësoni variablat e mëposhtme në AI Studio.</p>
+            <p className="text-zinc-500 font-medium">Ju lutem plotësoni variablat e mëposhtme në AI Studio ose Vercel.</p>
           </div>
         </div>
 
         <div className="space-y-4 mb-10">
-          {Object.entries(configStatus).map(([key, isSet]) => (
+          {Object.entries(requiredConfig).map(([key, isSet]) => (
             <div key={key} className={`p-5 rounded-2xl border flex items-center justify-between ${isSet ? 'bg-emerald-50/50 border-emerald-100' : 'bg-red-50/50 border-red-100'}`}>
               <div className="flex items-center gap-4">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isSet ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
@@ -334,6 +424,7 @@ const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ c
                   <p className="text-[10px] uppercase tracking-widest opacity-60 mt-0.5">
                     {key === 'SESSION_SECRET' && 'Një tekst i rastësishëm për sigurinë'}
                     {key === 'GEMINI_API_KEY' && 'Çelësi i AI nga Google AI Studio'}
+                    {key === 'MONGODB_URI' && 'Lidhja e databazës MongoDB Atlas'}
                   </p>
                 </div>
               </div>
@@ -343,6 +434,47 @@ const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ c
         </div>
 
         <div className={`p-6 rounded-3xl mb-8 ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
+          <div className="mb-5">
+            <h3 className="font-bold mb-2 flex items-center gap-2">
+              <i className="fas fa-database text-indigo-500"></i> MongoDB është e detyrueshme
+            </h3>
+            <p className="text-sm font-medium text-zinc-600">
+              Aplikacioni yt përdor <strong>MongoDB</strong> për përdoruesit, dialogjet, sugjerimet dhe log-et. <strong>Cloudinary nuk e zëvendëson MongoDB</strong>; është vetëm opsionale për upload-et e audio/video.
+            </p>
+          </div>
+
+          {Object.keys(optionalConfig).length > 0 && (
+            <div className="mb-5">
+              <h4 className="font-bold mb-3 flex items-center gap-2">
+                <i className="fas fa-cloud-upload-alt text-emerald-500"></i> Opsionale për media uploads
+              </h4>
+              <div className="space-y-3">
+                {Object.entries(optionalConfig).map(([key, isSet]) => (
+                  <div key={key} className={`p-4 rounded-2xl border flex items-center justify-between ${isSet ? 'bg-emerald-50/50 border-emerald-100' : 'bg-zinc-50 border-zinc-200'}`}>
+                    <div>
+                      <code className="text-sm font-bold">{key}</code>
+                      <p className="text-[10px] uppercase tracking-widest opacity-60 mt-0.5">
+                        {key === 'APP_URL' && 'URL publike e aplikacionit'}
+                        {key === 'CLOUDINARY_CLOUD_NAME' && 'Emri i cloud-it për storage të file-ve'}
+                        {key === 'CLOUDINARY_API_KEY' && 'API key për upload-et në Cloudinary'}
+                        {key === 'CLOUDINARY_API_SECRET' && 'API secret për upload-et në Cloudinary'}
+                      </p>
+                    </div>
+                    <span className={`text-[10px] font-black uppercase tracking-widest ${isSet ? 'text-emerald-600' : 'text-zinc-500'}`}>
+                      {isSet ? 'Vendosur' : 'Opsionale'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {configStatus?.storageMode && (
+            <p className="text-xs font-semibold text-zinc-500 mb-4">
+              Storage aktual për file: <strong>{configStatus.storageMode === 'cloudinary' ? 'Cloudinary' : 'lokal'}</strong>.
+            </p>
+          )}
+
           <h3 className="font-bold mb-4 flex items-center gap-2">
             <i className="fas fa-info-circle text-indigo-500"></i> Si t'i shtoni?
           </h3>
@@ -772,30 +904,25 @@ const SettingsView: React.FC<{ currentTheme: ThemeColor; onThemeChange: (t: Them
   );
 };
 
-const AdminLoginWrapper: React.FC<{ children: React.ReactNode; isDark: boolean }> = ({ children, isDark }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+const LoginView: React.FC<{ onLogin: (username: string, password: string) => Promise<void>; isLoading: boolean; error: string | null; isDark: boolean }> = ({ onLogin, isLoading, error, isDark }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
 
-  if (isAuthenticated) {
-    return <>{children}</>;
-  }
-
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (username === 'admi' && password === '123admin') {
-      setIsAuthenticated(true);
-      setError('');
-    } else {
-      setError('Kredencialet e gabuara');
-    }
+    await onLogin(username, password);
   };
 
   return (
-    <div className={`flex items-center justify-center h-full ${isDark ? 'bg-zinc-950 text-zinc-100' : 'bg-zinc-50 text-zinc-900'}`}>
+    <div className={`min-h-screen flex items-center justify-center p-6 ${isDark ? 'bg-zinc-950 text-zinc-100' : 'bg-zinc-50 text-zinc-900'}`}>
       <div className={`p-8 rounded-2xl shadow-xl w-full max-w-md ${isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-white border border-zinc-200'}`}>
+        <div className="flex justify-center mb-6">
+          <AngliBotLogo className="w-16 h-16" />
+        </div>
         <h2 className="text-2xl font-black mb-6 text-center">Hyrja e Administratorit</h2>
+        <p className="text-center text-sm text-zinc-500 mb-6">
+          Hyr vetëm me username <strong>admin</strong> dhe password <strong>123admin</strong>.
+        </p>
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
             <label className="block text-sm font-bold mb-2">Përdoruesi</label>
@@ -816,8 +943,8 @@ const AdminLoginWrapper: React.FC<{ children: React.ReactNode; isDark: boolean }
             />
           </div>
           {error && <p className="text-red-500 text-sm font-bold">{error}</p>}
-          <button type="submit" className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-colors">
-            Hyr
+          <button disabled={isLoading} type="submit" className={`w-full py-3 rounded-xl text-white font-bold transition-colors ${isLoading ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+            {isLoading ? 'Duke hyrë...' : 'Hyr'}
           </button>
         </form>
       </div>
@@ -880,9 +1007,9 @@ const AdminView: React.FC<{
       method: 'POST',
       body: formData
     });
-    
-    if (!res.ok) throw new Error("Upload failed");
-    const data = await res.json();
+
+    const data = await res.json().catch(() => ({ error: 'Upload failed' }));
+    if (!res.ok) throw new Error(data.error || "Upload failed");
     return data.url;
   };
 
