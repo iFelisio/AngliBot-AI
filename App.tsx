@@ -387,7 +387,7 @@ const App: React.FC = () => {
               </div>
             </div>
             <div className="flex-1 overflow-hidden">
-              <ChatView level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} embedded />
+              <ChatView level={currentUser?.proficiency || 'Beginner'} isDark={isDarkTheme} embedded />
             </div>
           </div>
         </main>
