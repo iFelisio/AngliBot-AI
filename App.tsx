@@ -784,7 +784,7 @@ const AdminLoginWrapper: React.FC<{ children: React.ReactNode; isDark: boolean }
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (username === 'admi' && password === '123admin') {
+    if (username === 'admin' && password === '123admin') {
       setIsAuthenticated(true);
       setError('');
     } else {

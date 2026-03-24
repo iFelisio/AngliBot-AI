@@ -9,8 +9,9 @@ import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import mongoose from 'mongoose';
 import { GoogleGenAI } from '@google/genai';
+import { v2 as cloudinary } from 'cloudinary';
+import { CloudinaryStorage } from 'multer-storage-cloudinary';
 
 declare module 'express-session' {
   interface SessionData {
@@ -24,7 +25,6 @@ const app = express();
 app.set('trust proxy', 1);
 
 let ai: any = null;
-let isDbReady = false;
 
 // Vercel specific paths
 const isVercel = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
@@ -38,47 +38,51 @@ if (!fs.existsSync(uploadsDir)) {
   }
 }
 
-// Mongoose Models
-mongoose.set('bufferCommands', false);
-const User = mongoose.models.User || mongoose.model<any>('User', new mongoose.Schema({ id: String, email: String }, { strict: false }));
-const Dialogue = mongoose.models.Dialogue || mongoose.model<any>('Dialogue', new mongoose.Schema({ id: String }, { strict: false }));
-const Animation = mongoose.models.Animation || mongoose.model<any>('Animation', new mongoose.Schema({ id: String }, { strict: false }));
-const Suggestion = mongoose.models.Suggestion || mongoose.model<any>('Suggestion', new mongoose.Schema({ id: String }, { strict: false }));
-const LoginLog = mongoose.models.LoginLog || mongoose.model<any>('LoginLog', new mongoose.Schema({ id: String }, { strict: false }));
+// In-Memory Data Stores (Fallback since MongoDB is removed)
+let users: any[] = [];
+let dialogues: any[] = [];
+let animations: any[] = [];
+let suggestions: any[] = [];
+let logs: any[] = [];
 
-// Initialize AI and DB lazily
+// Initialize AI lazily
 async function initServices() {
   if (!ai) {
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY || '' });
   }
-  if (!isDbReady && process.env.MONGODB_URI) {
-    try {
-      await mongoose.connect(process.env.MONGODB_URI, {
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 45000,
-      });
-      isDbReady = true;
-      console.log('MongoDB connected successfully');
-    } catch (err) {
-      console.error('MongoDB connection error:', err);
-      // Don't set isDbReady to true if connection fails
-    }
-  } else if (!process.env.MONGODB_URI) {
-    console.warn('MONGODB_URI is not set. Database will not work.');
-  }
+}
+
+// Cloudinary configuration
+if (process.env.CLOUDINARY_CLOUD_NAME) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
 }
 
 // Multer setup
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${uuidv4()}${ext}`);
-  },
-});
+let storage;
+if (process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME) {
+  storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+      folder: 'anglibot',
+      resource_type: 'auto'
+    } as any,
+  });
+} else {
+  storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      cb(null, uploadsDir);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname);
+      cb(null, `${uuidv4()}${ext}`);
+    },
+  });
+}
 const upload = multer({ storage });
 const APP_URL = process.env.APP_URL || `http://localhost:3000`;
 
@@ -104,7 +108,6 @@ app.use(
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    dbReady: isDbReady, 
     env: process.env.NODE_ENV || 'development',
     time: new Date().toISOString()
   });
@@ -124,14 +127,13 @@ app.use('/uploads', express.static(uploadsDir));
 
 app.post('/api/auth/login', async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   const { username, password } = req.body;
 
   if (username === 'admin' && password === '123admin') {
-    let user = await User.findOne({ email: 'admin@anglibot.ai' }).lean();
+    let user = users.find(u => u.email === 'admin@anglibot.ai');
 
     if (!user) {
-      user = await User.create({
+      user = {
         id: 'admin-id',
         name: 'Administrator',
         email: 'admin@anglibot.ai',
@@ -143,13 +145,13 @@ app.post('/api/auth/login', async (req, res) => {
         badges: ['Admin'],
         proficiency: 'Advanced',
         goal: 'Manage Platform',
-      });
+      };
+      users.push(user);
     } else {
-      await User.updateOne({ email: 'admin@anglibot.ai' }, { lastLogin: new Date().toISOString() });
       user.lastLogin = new Date().toISOString();
     }
 
-    await LoginLog.create({
+    logs.push({
       id: uuidv4(),
       userId: user.id,
       userName: user.name,
@@ -165,11 +167,10 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', async (req: any, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   if (!req.session.user) {
-    let user = await User.findOne({ email: 'admin@anglibot.ai' }).lean();
+    let user = users.find(u => u.email === 'admin@anglibot.ai');
     if (!user) {
-      user = await User.create({
+      user = {
         id: 'admin-id',
         name: 'Administrator',
         email: 'admin@anglibot.ai',
@@ -181,7 +182,8 @@ app.get('/api/auth/me', async (req: any, res) => {
         badges: ['Admin'],
         proficiency: 'Advanced',
         goal: 'Manage Platform',
-      });
+      };
+      users.push(user);
     }
     req.session.user = user;
   }
@@ -196,31 +198,33 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  const url = `${APP_URL}/uploads/${req.file.filename}`;
-  res.json({ url });
+  
+  if (process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME) {
+    res.json({ url: req.file.path });
+  } else {
+    const url = `${APP_URL}/uploads/${req.file.filename}`;
+    res.json({ url });
+  }
 });
 
 app.get('/api/users', requireAuth, async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const users = await User.find({}).lean();
   res.json(users);
 });
 
 app.delete('/api/users/:id', requireAuth, async (req: any, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
   if (!req.session.user?.isAdmin) return res.status(403).json({ error: 'Forbidden' });
-  await User.deleteOne({ id: req.params.id });
+  users = users.filter(u => u.id !== req.params.id);
   res.json({ success: true });
 });
 
 app.patch('/api/users/:id', requireAuth, async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const updated = await User.findOneAndUpdate({ id: req.params.id }, req.body, { new: true }).lean();
-  if (updated) {
-    res.json(updated);
+  const index = users.findIndex(u => u.id === req.params.id);
+  if (index !== -1) {
+    users[index] = { ...users[index], ...req.body };
+    res.json(users[index]);
   } else {
     res.status(404).json({ error: 'User not found' });
   }
@@ -228,66 +232,58 @@ app.patch('/api/users/:id', requireAuth, async (req, res) => {
 
 app.get('/api/dialogues', async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const dialogues = await Dialogue.find({}).lean();
   res.json(dialogues);
 });
 
 app.post('/api/dialogues', requireAuth, async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const newDialogue = await Dialogue.create({ ...req.body, id: uuidv4(), createdAt: new Date().toISOString() });
+  const newDialogue = { ...req.body, id: uuidv4(), createdAt: new Date().toISOString() };
+  dialogues.push(newDialogue);
   res.json(newDialogue);
 });
 
 app.delete('/api/dialogues/:id', requireAuth, async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  await Dialogue.deleteOne({ id: req.params.id });
+  dialogues = dialogues.filter(d => d.id !== req.params.id);
   res.json({ success: true });
 });
 
 app.get('/api/animations', async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const animations = await Animation.find({}).lean();
   res.json(animations);
 });
 
 app.post('/api/animations', requireAuth, async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const newAnim = await Animation.create({ ...req.body, id: uuidv4(), createdAt: new Date().toISOString() });
+  const newAnim = { ...req.body, id: uuidv4(), createdAt: new Date().toISOString() };
+  animations.push(newAnim);
   res.json(newAnim);
 });
 
 app.delete('/api/animations/:id', requireAuth, async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  await Animation.deleteOne({ id: req.params.id });
+  animations = animations.filter(a => a.id !== req.params.id);
   res.json({ success: true });
 });
 
 app.get('/api/suggestions', async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const suggestions = await Suggestion.find({}).lean();
   res.json(suggestions);
 });
 
 app.post('/api/suggestions', requireAuth, async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const newSuggestion = await Suggestion.create({ ...req.body, id: uuidv4(), date: new Date().toLocaleDateString() });
+  const newSuggestion = { ...req.body, id: uuidv4(), date: new Date().toLocaleDateString() };
+  suggestions.push(newSuggestion);
   res.json(newSuggestion);
 });
 
 app.patch('/api/suggestions/:id', requireAuth, async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const updated = await Suggestion.findOneAndUpdate({ id: req.params.id }, req.body, { new: true }).lean();
-  if (updated) {
-    res.json(updated);
+  const index = suggestions.findIndex(s => s.id === req.params.id);
+  if (index !== -1) {
+    suggestions[index] = { ...suggestions[index], ...req.body };
+    res.json(suggestions[index]);
   } else {
     res.status(404).json({ error: 'Suggestion not found' });
   }
@@ -295,15 +291,12 @@ app.patch('/api/suggestions/:id', requireAuth, async (req, res) => {
 
 app.get('/api/logs', requireAuth, async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const logs = await LoginLog.find({}).lean();
   res.json(logs);
 });
 
 app.delete('/api/logs', requireAuth, async (req, res) => {
   await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  await LoginLog.deleteMany({});
+  logs = [];
   res.json({ success: true });
 });
 
@@ -312,7 +305,7 @@ app.get('/api/config/status', (req, res) => {
     SESSION_SECRET: !!process.env.SESSION_SECRET,
     GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
     APP_URL: !!process.env.APP_URL,
-    MONGODB_URI: !!process.env.MONGODB_URI,
+    CLOUDINARY: !!(process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME),
   });
 });
 
