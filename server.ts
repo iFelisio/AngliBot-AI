@@ -7,7 +7,6 @@ import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import mongoose from 'mongoose';
 import { GoogleGenAI } from '@google/genai';
 
 declare module 'express-session' {
@@ -18,13 +17,7 @@ declare module 'express-session' {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __anglibotMongoPromise: Promise<typeof mongoose> | null | undefined;
-  // eslint-disable-next-line no-var
   var __anglibotAi: GoogleGenAI | null | undefined;
-  // eslint-disable-next-line no-var
-  var __anglibotLastDbError: string | null | undefined;
-  // eslint-disable-next-line no-var
-  var __anglibotNextDbRetryAt: number | null | undefined;
 }
 
 dotenv.config();
@@ -33,67 +26,90 @@ const app = express();
 app.set('trust proxy', 1);
 
 let ai: GoogleGenAI | null = globalThis.__anglibotAi ?? null;
-let isDbReady = false;
-let dbInitPromise: Promise<void> | null = null;
-let lastDbError = globalThis.__anglibotLastDbError ?? null;
-let nextDbRetryAt = globalThis.__anglibotNextDbRetryAt ?? 0;
 
-const DB_CONNECT_TIMEOUT_MS = Number(process.env.DB_CONNECT_TIMEOUT_MS || 3500);
-const DB_RETRY_COOLDOWN_MS = Number(process.env.DB_RETRY_COOLDOWN_MS || 15000);
+const isVercel = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+const uploadsDir = isVercel ? '/tmp/uploads' : path.join(process.cwd(), 'public', 'uploads');
+const dataDir = isVercel ? '/tmp/data' : path.join(process.cwd(), 'data');
+const dbFile = path.join(dataDir, 'app-db.json');
+const APP_URL = process.env.APP_URL || `http://localhost:3000`;
 
-const setDbFailureState = (message: string) => {
-  isDbReady = false;
-  lastDbError = message;
-  nextDbRetryAt = Date.now() + DB_RETRY_COOLDOWN_MS;
-  globalThis.__anglibotLastDbError = lastDbError;
-  globalThis.__anglibotNextDbRetryAt = nextDbRetryAt;
+const hasCloudinaryConfig = Boolean(
+  process.env.CLOUDINARY_CLOUD_NAME &&
+  process.env.CLOUDINARY_API_KEY &&
+  process.env.CLOUDINARY_API_SECRET
+);
+
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+type DbShape = {
+  users: any[];
+  dialogues: any[];
+  animations: any[];
+  suggestions: any[];
+  logs: any[];
 };
 
-const clearDbFailureState = () => {
-  lastDbError = null;
-  nextDbRetryAt = 0;
-  globalThis.__anglibotLastDbError = null;
-  globalThis.__anglibotNextDbRetryAt = 0;
+let db: DbShape = {
+  users: [],
+  dialogues: [],
+  animations: [],
+  suggestions: [],
+  logs: [],
 };
 
-const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
-  let timeoutHandle: NodeJS.Timeout | undefined;
-
+const loadDb = () => {
+  if (!fs.existsSync(dbFile)) return;
   try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timeoutHandle = setTimeout(() => reject(new Error(message)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
+    const raw = fs.readFileSync(dbFile, 'utf8');
+    const parsed = JSON.parse(raw);
+    db = {
+      users: Array.isArray(parsed.users) ? parsed.users : [],
+      dialogues: Array.isArray(parsed.dialogues) ? parsed.dialogues : [],
+      animations: Array.isArray(parsed.animations) ? parsed.animations : [],
+      suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
+      logs: Array.isArray(parsed.logs) ? parsed.logs : [],
+    };
+  } catch (error) {
+    console.error('Failed to load local DB:', error);
   }
 };
 
-const getRequiredConfigStatus = () => ({
-  SESSION_SECRET: !!process.env.SESSION_SECRET,
-  GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
-  MONGODB_URI: !!process.env.MONGODB_URI,
-});
+const persistDb = async () => {
+  await fs.promises.writeFile(dbFile, JSON.stringify(db, null, 2), 'utf8');
+};
 
-const getOptionalConfigStatus = () => ({
-  APP_URL: !!process.env.APP_URL,
-  CLOUDINARY_CLOUD_NAME: !!process.env.CLOUDINARY_CLOUD_NAME,
-  CLOUDINARY_API_KEY: !!process.env.CLOUDINARY_API_KEY,
-  CLOUDINARY_API_SECRET: !!process.env.CLOUDINARY_API_SECRET,
-});
+const initAI = () => {
+  if (!ai) {
+    ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+    globalThis.__anglibotAi = ai;
+  }
+};
 
 const getConfigStatus = () => ({
-  required: getRequiredConfigStatus(),
-  optional: getOptionalConfigStatus(),
+  required: {
+    SESSION_SECRET: !!process.env.SESSION_SECRET,
+    GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
+  },
+  optional: {
+    APP_URL: !!process.env.APP_URL,
+    CLOUDINARY_CLOUD_NAME: !!process.env.CLOUDINARY_CLOUD_NAME,
+    CLOUDINARY_API_KEY: !!process.env.CLOUDINARY_API_KEY,
+    CLOUDINARY_API_SECRET: !!process.env.CLOUDINARY_API_SECRET,
+  },
   storageMode: hasCloudinaryConfig ? 'cloudinary' : 'local',
+  databaseMode: 'local-json',
 });
 
 const ensureDefaultAdminUser = async () => {
-  let user = await User.findOne({ email: 'admin@anglibot.ai' }).lean();
+  let user = db.users.find((u) => u.email === 'admin@anglibot.ai');
   if (!user) {
-    user = await User.create({
+    user = {
       id: 'admin-id',
       name: 'Administrator',
       email: 'admin@anglibot.ai',
@@ -105,145 +121,42 @@ const ensureDefaultAdminUser = async () => {
       badges: ['Admin'],
       proficiency: 'Advanced',
       goal: 'Manage Platform',
-    });
+    };
+    db.users.push(user);
+    await persistDb();
   }
-
   return user;
 };
 
-// Vercel specific paths
-const isVercel = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
-const uploadsDir = isVercel ? '/tmp/uploads' : path.join(process.cwd(), 'public', 'uploads');
-const hasCloudinaryConfig = Boolean(
-  process.env.CLOUDINARY_CLOUD_NAME &&
-  process.env.CLOUDINARY_API_KEY &&
-  process.env.CLOUDINARY_API_SECRET
-);
+loadDb();
+void ensureDefaultAdminUser();
 
-if (!fs.existsSync(uploadsDir)) {
-  try {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-  } catch (err) {
-    console.error('Failed to create uploads directory:', err);
-  }
-}
-
-// Mongoose Models
-mongoose.set('bufferCommands', false);
-const User = mongoose.models.User || mongoose.model<any>('User', new mongoose.Schema({ id: String, email: String }, { strict: false }));
-const Dialogue = mongoose.models.Dialogue || mongoose.model<any>('Dialogue', new mongoose.Schema({ id: String }, { strict: false }));
-const Animation = mongoose.models.Animation || mongoose.model<any>('Animation', new mongoose.Schema({ id: String }, { strict: false }));
-const Suggestion = mongoose.models.Suggestion || mongoose.model<any>('Suggestion', new mongoose.Schema({ id: String }, { strict: false }));
-const LoginLog = mongoose.models.LoginLog || mongoose.model<any>('LoginLog', new mongoose.Schema({ id: String }, { strict: false }));
-
-const initAI = () => {
-  if (!ai) {
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY || '' });
-    globalThis.__anglibotAi = ai;
-  }
-};
-
-async function ensureDbConnection() {
-  if (mongoose.connection.readyState === 1) {
-    isDbReady = true;
-    clearDbFailureState();
-    return;
-  }
-
-  if (!process.env.MONGODB_URI) {
-    console.warn('MONGODB_URI is not set. Database will not work.');
-    setDbFailureState('MONGODB_URI is not set');
-    return;
-  }
-
-  if (nextDbRetryAt && Date.now() < nextDbRetryAt) {
-    throw new Error(lastDbError || 'Database reconnect cooldown active');
-  }
-
-  if (!dbInitPromise) {
-    dbInitPromise = (async () => {
-      try {
-        if (!globalThis.__anglibotMongoPromise) {
-          globalThis.__anglibotMongoPromise = mongoose.connect(process.env.MONGODB_URI, {
-            serverSelectionTimeoutMS: DB_CONNECT_TIMEOUT_MS,
-            connectTimeoutMS: DB_CONNECT_TIMEOUT_MS,
-            socketTimeoutMS: 45000,
-            family: 4,
-            maxPoolSize: 5,
-          }).catch((error) => {
-            globalThis.__anglibotMongoPromise = null;
-            throw error;
-          });
-        }
-
-        await withTimeout(
-          globalThis.__anglibotMongoPromise,
-          DB_CONNECT_TIMEOUT_MS + 500,
-          'Database connection timed out before the server could respond'
-        );
-        isDbReady = true;
-        clearDbFailureState();
-        console.log('MongoDB connected successfully');
-      } catch (err: any) {
-        globalThis.__anglibotMongoPromise = null;
-        const message = err?.message || 'Unknown MongoDB connection error';
-        setDbFailureState(message);
-        console.error('MongoDB connection error:', err);
-        throw err;
-      } finally {
-        dbInitPromise = null;
-      }
-    })();
-  }
-
-  await dbInitPromise;
-}
-
-async function initServices() {
-  initAI();
-  await ensureDbConnection();
-}
-
-// Multer setup
 const upload = multer({ storage: multer.memoryStorage() });
-const APP_URL = process.env.APP_URL || `http://localhost:3000`;
 
 const uploadToCloudinary = async (file: Express.Multer.File) => {
-  if (!hasCloudinaryConfig) {
-    throw new Error('Cloudinary is not configured');
-  }
+  if (!hasCloudinaryConfig) throw new Error('Cloudinary is not configured');
 
   const resourceType =
-    file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/')
-      ? 'video'
-      : 'auto';
+    file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/') ? 'video' : 'auto';
 
   const formData = new FormData();
   formData.append('file', new Blob([file.buffer], { type: file.mimetype }), file.originalname);
   formData.append('folder', process.env.CLOUDINARY_FOLDER || 'anglibot');
   formData.append('public_id', uuidv4());
 
-  const auth = Buffer.from(
-    `${process.env.CLOUDINARY_API_KEY}:${process.env.CLOUDINARY_API_SECRET}`
-  ).toString('base64');
+  const auth = Buffer.from(`${process.env.CLOUDINARY_API_KEY}:${process.env.CLOUDINARY_API_SECRET}`).toString('base64');
 
   const response = await fetch(
     `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`,
     {
       method: 'POST',
-      headers: {
-        Authorization: `Basic ${auth}`,
-      },
+      headers: { Authorization: `Basic ${auth}` },
       body: formData,
     }
   );
 
   const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data?.error?.message || 'Cloudinary upload failed');
-  }
-
+  if (!response.ok) throw new Error(data?.error?.message || 'Cloudinary upload failed');
   return data.secure_url || data.url;
 };
 
@@ -255,7 +168,6 @@ const saveLocally = async (file: Express.Multer.File) => {
   return `${APP_URL}/uploads/${filename}`;
 };
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
@@ -265,136 +177,89 @@ app.use(
     secret: process.env.SESSION_SECRET || 'anglibot-secret',
     resave: false,
     saveUninitialized: false,
-    cookie: { 
-      secure: isVercel, 
+    cookie: {
+      secure: isVercel,
       sameSite: 'lax',
-      httpOnly: true 
+      httpOnly: true,
     },
   })
 );
 
-// Health Check
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    dbReady: isDbReady, 
-    dbError: lastDbError,
+  res.json({
+    status: 'ok',
+    dbReady: true,
+    dbMode: 'local-json',
     env: process.env.NODE_ENV || 'development',
-    time: new Date().toISOString()
+    time: new Date().toISOString(),
   });
 });
 
-// API Routes
 const asyncRoute = (handler: any) => (req: any, res: any, next: any) =>
   Promise.resolve(handler(req, res, next)).catch(next);
 
 const requireAuth = asyncRoute(async (req: any, res: any, next: any) => {
-  await initServices();
-  if (req.session.user) {
-    return next();
-  }
-
+  initAI();
+  if (req.session.user) return next();
   return res.status(401).json({ error: 'Unauthorized' });
 });
 
 const requireAdmin = asyncRoute(async (req: any, res: any, next: any) => {
-  await initServices();
-  if (!req.session.user) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  if (!req.session.user.isAdmin) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
+  initAI();
+  if (!req.session.user) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.session.user.isAdmin) return res.status(403).json({ error: 'Forbidden' });
   return next();
 });
 
 app.use('/uploads', express.static(uploadsDir));
 
 app.post('/api/auth/login', asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
+  initAI();
   const { username, password } = req.body;
 
   if (username === 'admin' && password === '123admin') {
-    let user = await ensureDefaultAdminUser();
-
-    await User.updateOne({ email: 'admin@anglibot.ai' }, { lastLogin: new Date().toISOString() });
+    const user = await ensureDefaultAdminUser();
     user.lastLogin = new Date().toISOString();
 
-    await LoginLog.create({
+    db.logs.unshift({
       id: uuidv4(),
       userId: user.id,
       userName: user.name,
-      timestamp: new Date().toISOString()
+      timestamp: user.lastLogin,
     });
 
     req.session.user = user;
-    res.json(user);
-  } else {
-    res.status(401).json({ error: 'Username ose fjalëkalim i gabuar' });
+    await persistDb();
+    return res.json(user);
   }
+
+  return res.status(401).json({ error: 'Username ose fjalëkalim i gabuar' });
 }));
 
 app.get('/api/auth/me', asyncRoute(async (req: any, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  if (!req.session.user) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  initAI();
+  if (!req.session.user) return res.status(401).json({ error: 'Unauthorized' });
   res.json(req.session.user);
 }));
 
 app.get('/api/bootstrap', asyncRoute(async (req: any, res) => {
   initAI();
-  const config = getConfigStatus();
-
-  try {
-    await ensureDbConnection();
-  } catch (error: any) {
-    return res.status(503).json({
-      error: 'Database temporarily unavailable',
-      details: error?.message || lastDbError || 'Unknown database error',
-      retryAfterMs: Math.max(nextDbRetryAt - Date.now(), 0),
-      config,
-    });
-  }
-
-  if (!isDbReady) {
-    return res.status(503).json({
-      error: 'Database not connected',
-      details: lastDbError,
-      config,
-    });
-  }
-
   const currentUser = req.session.user || null;
   const isAdmin = !!currentUser?.isAdmin;
 
-  const [users, dialogues, animations, suggestions, logs] = await Promise.all([
-    isAdmin ? User.find({}).lean() : Promise.resolve([]),
-    Dialogue.find({}).lean(),
-    Animation.find({}).lean(),
-    Suggestion.find({}).lean(),
-    isAdmin ? LoginLog.find({}).lean() : Promise.resolve([]),
-  ]);
-
   res.json({
     currentUser,
-    users,
-    dialogues,
-    animations,
-    suggestions,
-    logs,
-    config,
+    users: isAdmin ? db.users : [],
+    dialogues: db.dialogues,
+    animations: db.animations,
+    suggestions: db.suggestions,
+    logs: isAdmin ? db.logs : [],
+    config: getConfigStatus(),
   });
 }));
 
 app.post('/api/auth/logout', (req, res) => {
-  req.session.destroy(() => {
-    res.json({ success: true });
-  });
+  req.session.destroy(() => res.json({ success: true }));
 });
 
 app.post('/api/upload', requireAdmin, upload.single('file'), asyncRoute(async (req, res) => {
@@ -402,10 +267,7 @@ app.post('/api/upload', requireAdmin, upload.single('file'), asyncRoute(async (r
 
   try {
     const url = hasCloudinaryConfig ? await uploadToCloudinary(req.file) : await saveLocally(req.file);
-    res.json({
-      url,
-      storage: hasCloudinaryConfig ? 'cloudinary' : 'local',
-    });
+    res.json({ url, storage: hasCloudinaryConfig ? 'cloudinary' : 'local' });
   } catch (error: any) {
     console.error('Upload Error:', error);
     res.status(503).json({
@@ -417,130 +279,110 @@ app.post('/api/upload', requireAdmin, upload.single('file'), asyncRoute(async (r
 }));
 
 app.get('/api/users', requireAdmin, asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const users = await User.find({}).lean();
-  res.json(users);
+  res.json(db.users);
 }));
 
-app.delete('/api/users/:id', requireAdmin, asyncRoute(async (req: any, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  await User.deleteOne({ id: req.params.id });
+app.delete('/api/users/:id', requireAdmin, asyncRoute(async (req, res) => {
+  db.users = db.users.filter((u) => u.id !== req.params.id);
+  await persistDb();
   res.json({ success: true });
 }));
 
-app.patch('/api/users/:id', requireAuth, asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
+app.patch('/api/users/:id', requireAuth, asyncRoute(async (req: any, res) => {
   if (req.body?.isAdmin && !req.session.user?.isAdmin) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   if (!req.session.user?.isAdmin && req.session.user?.id !== req.params.id) {
     return res.status(403).json({ error: 'Forbidden' });
   }
-  const updated = await User.findOneAndUpdate({ id: req.params.id }, req.body, { new: true }).lean();
-  if (updated) {
-    res.json(updated);
-  } else {
-    res.status(404).json({ error: 'User not found' });
+
+  const idx = db.users.findIndex((u) => u.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'User not found' });
+
+  db.users[idx] = { ...db.users[idx], ...req.body };
+  if (req.session.user?.id === req.params.id) {
+    req.session.user = db.users[idx];
   }
+
+  await persistDb();
+  res.json(db.users[idx]);
 }));
 
 app.get('/api/dialogues', asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const dialogues = await Dialogue.find({}).lean();
-  res.json(dialogues);
+  res.json(db.dialogues);
 }));
 
 app.post('/api/dialogues', requireAdmin, asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const newDialogue = await Dialogue.create({ ...req.body, id: uuidv4(), createdAt: new Date().toISOString() });
+  const newDialogue = { ...req.body, id: uuidv4(), createdAt: new Date().toISOString() };
+  db.dialogues.unshift(newDialogue);
+  await persistDb();
   res.json(newDialogue);
 }));
 
 app.delete('/api/dialogues/:id', requireAdmin, asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  await Dialogue.deleteOne({ id: req.params.id });
+  db.dialogues = db.dialogues.filter((d) => d.id !== req.params.id);
+  await persistDb();
   res.json({ success: true });
 }));
 
 app.get('/api/animations', asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const animations = await Animation.find({}).lean();
-  res.json(animations);
+  res.json(db.animations);
 }));
 
 app.post('/api/animations', requireAdmin, asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const newAnim = await Animation.create({ ...req.body, id: uuidv4(), createdAt: new Date().toISOString() });
+  const newAnim = { ...req.body, id: uuidv4(), createdAt: new Date().toISOString() };
+  db.animations.unshift(newAnim);
+  await persistDb();
   res.json(newAnim);
 }));
 
 app.delete('/api/animations/:id', requireAdmin, asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  await Animation.deleteOne({ id: req.params.id });
+  db.animations = db.animations.filter((a) => a.id !== req.params.id);
+  await persistDb();
   res.json({ success: true });
 }));
 
 app.get('/api/suggestions', asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const suggestions = await Suggestion.find({}).lean();
-  res.json(suggestions);
+  res.json(db.suggestions);
 }));
 
 app.post('/api/suggestions', requireAuth, asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const newSuggestion = await Suggestion.create({ ...req.body, id: uuidv4(), date: new Date().toLocaleDateString() });
+  const newSuggestion = { ...req.body, id: uuidv4(), date: new Date().toLocaleDateString() };
+  db.suggestions.unshift(newSuggestion);
+  await persistDb();
   res.json(newSuggestion);
 }));
 
 app.patch('/api/suggestions/:id', requireAuth, asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const updated = await Suggestion.findOneAndUpdate({ id: req.params.id }, req.body, { new: true }).lean();
-  if (updated) {
-    res.json(updated);
-  } else {
-    res.status(404).json({ error: 'Suggestion not found' });
-  }
+  const idx = db.suggestions.findIndex((s) => s.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Suggestion not found' });
+
+  db.suggestions[idx] = { ...db.suggestions[idx], ...req.body };
+  await persistDb();
+  res.json(db.suggestions[idx]);
 }));
 
 app.get('/api/logs', requireAdmin, asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  const logs = await LoginLog.find({}).lean();
-  res.json(logs);
+  res.json(db.logs);
 }));
 
 app.delete('/api/logs', requireAdmin, asyncRoute(async (req, res) => {
-  await initServices();
-  if (!isDbReady) return res.status(503).json({ error: 'Database not connected' });
-  await LoginLog.deleteMany({});
+  db.logs = [];
+  await persistDb();
   res.json({ success: true });
 }));
 
 app.get('/api/config/status', (req, res) => {
   res.json({
     ...getConfigStatus(),
-    dbReady: isDbReady,
-    dbError: lastDbError,
+    dbReady: true,
+    dbMode: 'local-json',
   });
 });
 
 app.post('/api/ai/chat', requireAuth, asyncRoute(async (req, res) => {
   const { message, proficiency, history } = req.body;
-  if (!ai) {
-    return res.status(503).json({ error: 'AI service not initialized' });
-  }
+  if (!ai) return res.status(503).json({ error: 'AI service not initialized' });
 
   try {
     const chat = ai.chats.create({
@@ -550,7 +392,7 @@ app.post('/api/ai/chat', requireAuth, asyncRoute(async (req, res) => {
       },
       history: history.map((msg: any) => ({
         role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.text }]
+        parts: [{ text: msg.text }],
       })),
     });
     const result = await chat.sendMessage({ message });
@@ -563,15 +405,13 @@ app.post('/api/ai/chat', requireAuth, asyncRoute(async (req, res) => {
 
 app.post('/api/ai/generate', requireAuth, asyncRoute(async (req, res) => {
   const { prompt, config, model } = req.body;
-  if (!ai) {
-    return res.status(503).json({ error: 'AI service not initialized' });
-  }
+  if (!ai) return res.status(503).json({ error: 'AI service not initialized' });
 
   try {
     const result = await ai.models.generateContent({
       model: model || 'gemini-3-flash-preview',
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config
+      config,
     });
     res.json({ text: result.text });
   } catch (error: any) {
@@ -584,42 +424,27 @@ app.all('/api/*all', (req, res) => {
   res.status(404).json({ error: `API route ${req.method} ${req.url} not found` });
 });
 
-// Error Handler
 app.use((err: any, req: any, res: any, next: any) => {
   console.error('Server Error:', err);
-  const details = err?.message || 'Unknown error';
-  const isMongoError =
-    err?.name?.includes('Mongo') ||
-    details.includes('ECONNREFUSED') ||
-    details.includes('ECONNRESET') ||
-    details.includes('buffering timed out') ||
-    details.includes('Server selection timed out') ||
-    details.includes('topology');
-
-  if (isMongoError) {
-    return res.status(503).json({
-      error: 'Database temporarily unavailable',
-      details,
-    });
-  }
-
-  res.status(500).json({ error: 'Internal Server Error', details });
+  res.status(500).json({ error: 'Internal Server Error', details: err?.message || 'Unknown error' });
 });
 
-// Vite Dev Server / Static Files
 if (!isVercel) {
   const PORT = 3000;
-  import('vite').then(({ createServer: createViteServer }) => createViteServer({
-    server: { middlewareMode: true },
-    appType: 'spa',
-    root: process.cwd(),
-  })).then((vite) => {
-    app.use(vite.middlewares);
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Server running on http://localhost:${PORT}`);
+  import('vite')
+    .then(({ createServer: createViteServer }) =>
+      createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+        root: process.cwd(),
+      })
+    )
+    .then((vite) => {
+      app.use(vite.middlewares);
+      app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+      });
     });
-  });
 }
 
-// Export for Vercel
 export default app;

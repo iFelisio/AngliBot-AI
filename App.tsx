@@ -54,7 +54,7 @@ const App: React.FC = () => {
     if (!message) return fallback;
 
     if (message.includes('Database connection timed out')) {
-      return 'Serveri po vonohet teksa lidhet me databazën. Kontrollo MONGODB_URI në Vercel ose provo sërish pas pak.';
+      return 'Serveri po vonohet gjatë ngarkimit të të dhënave. Provo sërish pas pak.';
     }
 
     if (message.includes('FUNCTION_INVOCATION_FAILED') || message.includes('A server error has occurred')) {
@@ -62,7 +62,7 @@ const App: React.FC = () => {
     }
 
     if (message.includes('Database temporarily unavailable') || message.includes('Database not connected')) {
-      return 'Lidhja me databazën dështoi në server. Kontrollo MONGODB_URI në Vercel dhe provo sërish.';
+      return 'Storage i serverit është përkohësisht i padisponueshëm. Provo sërish pas pak.';
     }
 
     if (message.includes('<!doctype html') || message.includes('<html')) {
@@ -141,7 +141,7 @@ const App: React.FC = () => {
       console.error("Error fetching initial data", e);
       const message =
         e?.name === 'AbortError'
-          ? 'Kërkesa po vonon shumë. Serveri mund të jetë bllokuar duke pritur databazën.'
+          ? 'Kërkesa po vonon shumë. Serveri mund të jetë i ngarkuar për momentin.'
           : e.message || 'Dështim i panjohur';
       setGlobalError(`Gabim në rrjet: ${normalizeErrorMessage(message)}`);
     } finally {
@@ -196,8 +196,7 @@ const App: React.FC = () => {
   const optionalConfig = configStatus?.optional || {};
   const isConfigured = Boolean(
     requiredConfig.GEMINI_API_KEY &&
-    requiredConfig.SESSION_SECRET &&
-    requiredConfig.MONGODB_URI
+    requiredConfig.SESSION_SECRET
   );
 
   if (globalError) {
@@ -424,7 +423,7 @@ const SetupRequiredView: React.FC<{ configStatus: any; requiredConfig: Record<st
                   <p className="text-[10px] uppercase tracking-widest opacity-60 mt-0.5">
                     {key === 'SESSION_SECRET' && 'Një tekst i rastësishëm për sigurinë'}
                     {key === 'GEMINI_API_KEY' && 'Çelësi i AI nga Google AI Studio'}
-                    {key === 'MONGODB_URI' && 'Lidhja e databazës MongoDB Atlas'}
+                    {key === 'MONGODB_URI' && 'Nuk kërkohet më në këtë version'}
                   </p>
                 </div>
               </div>
@@ -436,10 +435,10 @@ const SetupRequiredView: React.FC<{ configStatus: any; requiredConfig: Record<st
         <div className={`p-6 rounded-3xl mb-8 ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
           <div className="mb-5">
             <h3 className="font-bold mb-2 flex items-center gap-2">
-              <i className="fas fa-database text-indigo-500"></i> MongoDB është e detyrueshme
+              <i className="fas fa-database text-indigo-500"></i> MongoDB u hoq nga ky version
             </h3>
             <p className="text-sm font-medium text-zinc-600">
-              Aplikacioni yt përdor <strong>MongoDB</strong> për përdoruesit, dialogjet, sugjerimet dhe log-et. <strong>Cloudinary nuk e zëvendëson MongoDB</strong>; është vetëm opsionale për upload-et e audio/video.
+              Aplikacioni tani ruan të dhënat e përdoruesve/dialogjeve/animacioneve në storage lokal JSON në server. Cloudinary përdoret vetëm për upload-e media kur kredencialet janë vendosur.
             </p>
           </div>
 
