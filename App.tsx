@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeColor, User, Dialogue, Suggestion, Proficiency, Goal, LoginEvent, AnimationMedia } from './types';
 import { translateText, chatWithAI, processContent } from './services/geminiService';
 import { Wordle, Hangman, SentenceBuilder, WordScramble, MemoryMatch } from './components/Games';
@@ -31,9 +31,22 @@ const NavLink: React.FC<{ to: string; icon: string; children: React.ReactNode; h
   );
 };
 
+const safeFetch = async (url: string, options?: RequestInit) => {
+  const res = await fetch(url, { ...options, credentials: 'include' });
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    data = { error: text || res.statusText || 'Gabim i panjohur' };
+  }
+  return { ok: res.ok, status: res.status, data };
+};
+
 const App: React.FC = () => {
   const [theme, setTheme] = useState<ThemeColor>('default');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [dialogues, setDialogues] = useState<Dialogue[]>([]);
   const [animations, setAnimations] = useState<AnimationMedia[]>([]);
@@ -43,6 +56,7 @@ const App: React.FC = () => {
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [configStatus, setConfigStatus] = useState<any>(null);
   const location = useLocation();
+  const navigate = useNavigate();
 
   const [globalError, setGlobalError] = useState<string | null>(null);
 
@@ -55,6 +69,7 @@ const App: React.FC = () => {
           setCurrentUser(me.data);
           localStorage.setItem('anglibot_user', JSON.stringify(me.data));
         }
+        setIsAuthReady(true);
 
         const [users, dialogues, animations, suggestions, logs, config] = await Promise.all([
           safeFetch('/api/users'),
@@ -86,17 +101,6 @@ const App: React.FC = () => {
     fetchData();
   }, []);
 
-  const safeFetch = async (url: string, options?: RequestInit) => {
-    const res = await fetch(url, { ...options, credentials: 'include' });
-    const text = await res.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (e) {
-      data = { error: text || res.statusText || 'Gabim i panjohur' };
-    }
-    return { ok: res.ok, status: res.status, data };
-  };
 
   const addPoints = async (pts: number) => {
     if (!currentUser) return;
@@ -110,6 +114,32 @@ const App: React.FC = () => {
       const updated = res.data;
       setCurrentUser(updated);
     }
+  };
+
+  const handleLogout = async () => {
+    await safeFetch('/api/auth/logout', { method: 'POST' });
+    setCurrentUser(null);
+    localStorage.removeItem('anglibot_user');
+    sessionStorage.removeItem('admin_authenticated');
+    navigate('/');
+  };
+
+  const handleLogin = async (username: string, password: string): Promise<{ok: boolean, error?: string}> => {
+    const res = await safeFetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    if (res.ok) {
+      setCurrentUser(res.data);
+      localStorage.setItem('anglibot_user', JSON.stringify(res.data));
+      if (res.data.isAdmin) {
+        sessionStorage.setItem('admin_authenticated', 'true');
+        navigate('/admin');
+      }
+      return { ok: true };
+    }
+    return { ok: false, error: res.data.error || 'Kredencialet e gabuara' };
   };
 
   const isDarkTheme = theme === 'dark' || (theme === 'default' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -141,21 +171,25 @@ const App: React.FC = () => {
   }
 
   if (!currentUser) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center p-6 ${isDarkTheme ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-black'}`}>
-        <div className={`max-w-md w-full p-10 rounded-[32px] shadow-2xl border transition-all duration-500 ${isDarkTheme ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
-          <div className="flex justify-center mb-6">
-            <AngliBotLogo className="w-16 h-16" />
-          </div>
-          <h1 className="text-3xl font-black mb-2 tracking-tight text-center">AngliBot AI</h1>
-          <p className="text-zinc-500 mb-8 text-sm font-medium leading-relaxed text-center">Duke hapur aplikacionin...</p>
-          <div className="flex justify-center">
-            <i className="fas fa-circle-notch animate-spin text-4xl text-indigo-500"></i>
+    if (!isAuthReady) {
+      return (
+        <div className={`min-h-screen flex items-center justify-center p-6 ${isDarkTheme ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-black'}`}>
+          <div className={`max-w-md w-full p-10 rounded-[32px] shadow-2xl border transition-all duration-500 ${isDarkTheme ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+            <div className="flex justify-center mb-6">
+              <AngliBotLogo className="w-16 h-16" />
+            </div>
+            <h1 className="text-3xl font-black mb-2 tracking-tight text-center">AngliBot AI</h1>
+            <p className="text-zinc-500 mb-8 text-sm font-medium leading-relaxed text-center">Duke hapur aplikacionin...</p>
+            <div className="flex justify-center">
+              <i className="fas fa-circle-notch animate-spin text-4xl text-indigo-500"></i>
+            </div>
           </div>
         </div>
-      </div>
-    );
+      );
+    }
   }
+
+  const isGuest = !currentUser || currentUser.id === 'guest';
 
   return (
     <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${isDarkTheme ? 'bg-zinc-950 text-zinc-100' : 'bg-zinc-50 text-zinc-900'}`}>
@@ -182,19 +216,32 @@ const App: React.FC = () => {
               <NavLink to="/streak" icon="fire" isDark={isDarkTheme}>Streak</NavLink>
               <NavLink to="/suggestions" icon="lightbulb" isDark={isDarkTheme}>Sugjerime</NavLink>
               <NavLink to="/settings" icon="cog" isDark={isDarkTheme}>Cilësimet</NavLink>
-              {currentUser.isAdmin && <NavLink to="/admin" icon="user-shield" highlight isDark={isDarkTheme}>Paneli Admin</NavLink>}
+              {isGuest ? (
+                <NavLink to="/login" icon="user-lock" isDark={isDarkTheme}>Hyr si Admin</NavLink>
+              ) : (
+                currentUser?.isAdmin && <NavLink to="/admin" icon="user-shield" highlight isDark={isDarkTheme}>Paneli Admin</NavLink>
+              )}
             </nav>
 
             <div className={`mt-auto p-4 rounded-2xl border transition-all ${isDarkTheme ? 'bg-zinc-800/50 border-zinc-700' : 'bg-zinc-100/50 border-zinc-200'}`}>
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg">
-                  {(currentUser.name || currentUser.displayName || 'U')[0].toUpperCase()}
+              {isGuest ? (
+                <div className="text-center">
+                  <p className="text-xs font-bold text-zinc-500 mb-3 uppercase tracking-widest">Hyni për të ruajtur progresin</p>
+                  <Link to="/admin" className="block w-full py-2 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition-all">
+                    Hyr si Admin
+                  </Link>
                 </div>
-                <div className="overflow-hidden">
-                  <p className="text-sm font-bold truncate">{currentUser.name || currentUser.displayName || 'Përdorues'}</p>
-                  <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">{currentUser.points || 0} XP • {currentUser.streak || 0} DITË</p>
+              ) : (
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg">
+                    {(currentUser?.name || currentUser?.displayName || 'U')[0].toUpperCase()}
+                  </div>
+                  <div className="overflow-hidden">
+                    <p className="text-sm font-bold truncate">{currentUser?.name || currentUser?.displayName || 'Përdorues'}</p>
+                    <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">{currentUser?.points || 0} XP • {currentUser?.streak || 0} DITË</p>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         </aside>
@@ -214,11 +261,11 @@ const App: React.FC = () => {
             <div className="flex items-center gap-4">
               <div className={`px-3 py-1.5 rounded-full flex items-center gap-2 border ${isDarkTheme ? 'bg-zinc-800 border-zinc-700' : 'bg-zinc-100 border-zinc-200'}`}>
                 <i className="fas fa-fire text-orange-500"></i>
-                <span className="text-xs font-bold">{currentUser.streak || 0}</span>
+                <span className="text-xs font-bold">{currentUser?.streak || 0}</span>
               </div>
               <div className={`px-3 py-1.5 rounded-full flex items-center gap-2 border ${isDarkTheme ? 'bg-zinc-800 border-zinc-700' : 'bg-zinc-100 border-zinc-200'}`}>
                 <i className="fas fa-star text-yellow-500"></i>
-                <span className="text-xs font-bold">{currentUser.points || 0} XP</span>
+                <span className="text-xs font-bold">{currentUser?.points || 0} XP</span>
               </div>
             </div>
           </header>
@@ -227,45 +274,54 @@ const App: React.FC = () => {
             <div className="max-w-3xl mx-auto w-full px-4 py-8 md:px-8">
               <Routes>
                 <Route path="/" element={<PerkthimView onTranslate={() => addPoints(5)} isDark={isDarkTheme} />} />
-                <Route path="/dialogues" element={<DialoguesView dialogues={dialogues} level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
+                <Route path="/dialogues" element={<DialoguesView dialogues={dialogues} level={currentUser?.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
                 <Route path="/animations" element={<AnimationsView animations={animations} isDark={isDarkTheme} />} />
-                <Route path="/games" element={<GamesView onWin={addPoints} level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
+                <Route path="/games" element={<GamesView onWin={addPoints} level={currentUser?.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
                 <Route path="/leaderboard" element={<LeaderboardView users={allUsers} isDark={isDarkTheme} />} />
-                <Route path="/chat" element={<ChatView level={currentUser.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
-                <Route path="/streak" element={<StreakView user={currentUser} isDark={isDarkTheme} />} />
+                <Route path="/chat" element={<ChatView level={currentUser?.proficiency || 'Beginner'} isDark={isDarkTheme} />} />
+                <Route path="/streak" element={<StreakView user={currentUser || { id: 'guest', name: 'Vizitor', points: 0, streak: 0, proficiency: 'Beginner', isAdmin: false, email: '', picture: '', lastLogin: '', badges: [], goal: 'Learn' }} isDark={isDarkTheme} />} />
                 <Route path="/suggestions" element={<SuggestionsView suggestions={suggestions} onAdd={async text => {
+                  if (isGuest) {
+                    alert("Ju lutem hyni si administrator për të dërguar sugjerime.");
+                    return;
+                  }
                   await safeFetch('/api/suggestions', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ userId: currentUser.id, userName: currentUser.name || currentUser.displayName || 'Përdorues', text })
+                    body: JSON.stringify({ userId: currentUser?.id, userName: currentUser?.name || currentUser?.displayName || 'Përdorues', text })
                   });
                 }} isDark={isDarkTheme} />} />
-                <Route path="/settings" element={<SettingsView currentTheme={theme} onThemeChange={setTheme} isDark={isDarkTheme} />} />
-                {currentUser.isAdmin && (
-                  <Route path="/admin" element={
-                    <AdminLoginWrapper isDark={isDarkTheme}>
-                      <AdminView 
-                        users={allUsers} 
-                        suggestions={suggestions} 
-                        loginLogs={loginLogs} 
-                        dialogues={dialogues} 
-                        animations={animations} 
-                        onDialogueAdd={async d => { await safeFetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }); }} 
-                        onDialogueRemove={async id => { await safeFetch(`/api/dialogues/${id}`, { method: 'DELETE' }); }} 
-                        onClearDialogues={async () => { for (const d of dialogues) { await safeFetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); } }}
-                        onAnimationAdd={async a => { await safeFetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }); }} 
-                        onAnimationRemove={async id => { await safeFetch(`/api/animations/${id}`, { method: 'DELETE' }); }} 
-                        onMakeAdmin={async id => { await safeFetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) }); }} 
-                        onRespondSuggestion={async (id, msg) => { await safeFetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) }); }} 
-                        onClearLogs={async () => { await safeFetch('/api/logs', { method: 'DELETE' }); }} 
-                        onDeleteUser={async id => { await safeFetch(`/api/users/${id}`, { method: 'DELETE' }); }} 
-                        onClearScoreboard={async () => { for (const u of allUsers) { if (u.points > 0) { await safeFetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } } }} 
-                        onResetUserScore={async id => { await safeFetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); }} 
-                        isDark={isDarkTheme} 
-                      />
-                    </AdminLoginWrapper>
-                  } />
-                )}
+                <Route path="/settings" element={<SettingsView currentTheme={theme} onThemeChange={setTheme} onLogout={handleLogout} isDark={isDarkTheme} />} />
+                <Route path="/login" element={
+                  <div className="flex items-center justify-center h-full">
+                    <div className="w-full max-w-md">
+                      <LoginView onLogin={handleLogin} isDark={isDarkTheme} />
+                    </div>
+                  </div>
+                } />
+                <Route path="/admin" element={
+                  <AdminLoginWrapper isDark={isDarkTheme} currentUser={currentUser} onLoginSuccess={(user) => setCurrentUser(user)}>
+                    <AdminView 
+                      users={allUsers} 
+                      suggestions={suggestions} 
+                      loginLogs={loginLogs} 
+                      dialogues={dialogues} 
+                      animations={animations} 
+                      onDialogueAdd={async d => { await safeFetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }); }} 
+                      onDialogueRemove={async id => { await safeFetch(`/api/dialogues/${id}`, { method: 'DELETE' }); }} 
+                      onClearDialogues={async () => { for (const d of dialogues) { await safeFetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); } }}
+                      onAnimationAdd={async a => { await safeFetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }); }} 
+                      onAnimationRemove={async id => { await safeFetch(`/api/animations/${id}`, { method: 'DELETE' }); }} 
+                      onMakeAdmin={async id => { await safeFetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) }); }} 
+                      onRespondSuggestion={async (id, msg) => { await safeFetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) }); }} 
+                      onClearLogs={async () => { await safeFetch('/api/logs', { method: 'DELETE' }); }} 
+                      onDeleteUser={async id => { await safeFetch(`/api/users/${id}`, { method: 'DELETE' }); }} 
+                      onClearScoreboard={async () => { for (const u of allUsers) { if (u.points > 0) { await safeFetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } } }} 
+                      onResetUserScore={async id => { await safeFetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); }} 
+                      isDark={isDarkTheme} 
+                    />
+                  </AdminLoginWrapper>
+                } />
               </Routes>
             </div>
           </div>
@@ -307,6 +363,70 @@ const App: React.FC = () => {
 };
 
 // --- Views ---
+
+const LoginView: React.FC<{ onLogin: (u: string, p: string) => Promise<{ok: boolean, error?: string}>; isDark: boolean }> = ({ onLogin, isDark }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    const res = await onLogin(username, password);
+    if (!res.ok) {
+      setError(res.error || 'Gabim');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="flex items-center justify-center p-6">
+      <div className={`max-w-md w-full p-10 rounded-[40px] shadow-2xl border transition-all duration-500 ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+        <div className="flex justify-center mb-8">
+          <AngliBotLogo className="w-20 h-20" />
+        </div>
+        <h1 className="text-3xl font-black mb-2 tracking-tight text-center">Mirësevini</h1>
+        <p className="text-zinc-500 mb-10 text-sm font-medium leading-relaxed text-center">Hyni në llogarinë tuaj për të vazhduar.</p>
+        
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label className="block text-xs font-black uppercase tracking-widest text-zinc-400 mb-2 ml-1">Përdoruesi</label>
+            <input 
+              type="text" 
+              value={username} 
+              onChange={e => setUsername(e.target.value)}
+              className={`w-full p-5 rounded-2xl outline-none font-bold transition-all border ${isDark ? 'bg-zinc-800 border-zinc-700 text-white focus:bg-zinc-700' : 'bg-zinc-50 border-zinc-200 text-black focus:bg-white'}`}
+              placeholder="admin"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-black uppercase tracking-widest text-zinc-400 mb-2 ml-1">Fjalëkalimi</label>
+            <input 
+              type="password" 
+              value={password} 
+              onChange={e => setPassword(e.target.value)}
+              className={`w-full p-5 rounded-2xl outline-none font-bold transition-all border ${isDark ? 'bg-zinc-800 border-zinc-700 text-white focus:bg-zinc-700' : 'bg-zinc-50 border-zinc-200 text-black focus:bg-white'}`}
+              placeholder="••••••••"
+            />
+          </div>
+          {error && <p className="text-red-500 text-xs font-bold ml-1">{error}</p>}
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full bg-black text-white py-5 rounded-2xl font-black shadow-xl hover:bg-zinc-800 active:scale-[0.98] transition-all mt-4"
+          >
+            {loading ? <i className="fas fa-circle-notch animate-spin"></i> : 'Hyr në Llogari'}
+          </button>
+        </form>
+
+        <div className="mt-10 pt-8 border-t border-zinc-100 dark:border-zinc-800 text-center">
+          <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">AngliBot AI v2.0</p>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ configStatus, isDark }) => {
   const missingKeys = Object.entries(configStatus)
@@ -796,7 +916,7 @@ const SuggestionsView: React.FC<{ suggestions: Suggestion[]; onAdd: (text: strin
   );
 };
 
-const SettingsView: React.FC<{ currentTheme: ThemeColor; onThemeChange: (t: ThemeColor) => void; isDark: boolean }> = ({ currentTheme, onThemeChange, isDark }) => {
+const SettingsView: React.FC<{ currentTheme: ThemeColor; onThemeChange: (t: ThemeColor) => void; onLogout: () => void; isDark: boolean }> = ({ currentTheme, onThemeChange, onLogout, isDark }) => {
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
       <h1 className="text-3xl font-black tracking-tight mb-10">Cilësimet</h1>
@@ -810,6 +930,18 @@ const SettingsView: React.FC<{ currentTheme: ThemeColor; onThemeChange: (t: Them
           <button onClick={() => onThemeChange('light')} className={`p-5 rounded-2xl border-2 font-bold transition-all ${currentTheme === 'light' ? 'border-black bg-black text-white' : 'border-zinc-100 hover:border-zinc-200'}`}>Dritë</button>
           <button onClick={() => onThemeChange('dark')} className={`p-5 rounded-2xl border-2 font-bold transition-all ${currentTheme === 'dark' ? 'border-black bg-black text-white' : 'border-zinc-100 hover:border-zinc-200'}`}>Errët</button>
         </div>
+      </div>
+
+      <div className={`p-8 rounded-[32px] shadow-xl border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
+        <h3 className="font-bold text-lg mb-6 flex items-center gap-3">
+          <i className="fas fa-sign-out-alt text-red-500"></i> Llogaria
+        </h3>
+        <button 
+          onClick={onLogout}
+          className="w-full py-5 rounded-2xl border-2 border-red-100 text-red-600 font-bold hover:bg-red-50 transition-all flex items-center justify-center gap-2"
+        >
+          <i className="fas fa-sign-out-alt"></i> Dil nga Llogaria
+        </button>
       </div>
 
       <div className={`p-8 rounded-[32px] shadow-xl border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-white'}`}>
@@ -829,67 +961,46 @@ const SettingsView: React.FC<{ currentTheme: ThemeColor; onThemeChange: (t: Them
   );
 };
 
-const AdminLoginWrapper: React.FC<{ children: React.ReactNode; isDark: boolean }> = ({ children, isDark }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+const AdminLoginWrapper: React.FC<{ 
+  children: React.ReactNode; 
+  isDark: boolean;
+  currentUser: User | null;
+  onLoginSuccess: (user: User) => void;
+}> = ({ children, isDark, currentUser, onLoginSuccess }) => {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return sessionStorage.getItem('admin_authenticated') === 'true';
+  });
 
-  if (isAuthenticated) {
+  if (isAuthenticated || currentUser?.isAdmin) {
     return <>{children}</>;
   }
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-      });
-      if (res.ok) {
-        const user = await res.json();
+  const handleAdminLogin = async (u: string, p: string) => {
+    const res = await safeFetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    if (res.ok) {
+      const user = res.data;
+      if (user.isAdmin) {
         localStorage.setItem('anglibot_user', JSON.stringify(user));
+        sessionStorage.setItem('admin_authenticated', 'true');
         setIsAuthenticated(true);
-        setError('');
-        window.location.reload();
+        onLoginSuccess(user);
+        return { ok: true };
       } else {
-        const data = await res.json();
-        setError(data.error || 'Kredencialet e gabuara');
+        return { ok: false, error: 'Ju nuk jeni administrator' };
       }
-    } catch (err) {
-      setError('Gabim në lidhje me serverin');
+    } else {
+      return { ok: false, error: res.data.error || 'Kredencialet e gabuara' };
     }
   };
 
   return (
-    <div className={`flex items-center justify-center h-full ${isDark ? 'bg-zinc-950 text-zinc-100' : 'bg-zinc-50 text-zinc-900'}`}>
-      <div className={`p-8 rounded-2xl shadow-xl w-full max-w-md ${isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-white border border-zinc-200'}`}>
-        <h2 className="text-2xl font-black mb-6 text-center">Hyrja e Administratorit</h2>
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
-            <label className="block text-sm font-bold mb-2">Përdoruesi</label>
-            <input 
-              type="text" 
-              value={username} 
-              onChange={(e) => setUsername(e.target.value)} 
-              className={`w-full p-3 rounded-xl border focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDark ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-zinc-50 border-zinc-300 text-black'}`}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-bold mb-2">Fjalëkalimi</label>
-            <input 
-              type="password" 
-              value={password} 
-              onChange={(e) => setPassword(e.target.value)} 
-              className={`w-full p-3 rounded-xl border focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDark ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-zinc-50 border-zinc-300 text-black'}`}
-            />
-          </div>
-          {error && <p className="text-red-500 text-sm font-bold">{error}</p>}
-          <button type="submit" className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-colors">
-            Hyr
-          </button>
-        </form>
+    <div className="flex items-center justify-center h-full">
+      <div className="w-full max-w-md">
+        <LoginView onLogin={handleAdminLogin} isDark={isDark} />
       </div>
     </div>
   );

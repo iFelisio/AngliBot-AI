@@ -147,7 +147,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // API Routes
-const requireAuth = async (req: any, res: any, next: any) => {
+const populateUser = async (req: any, res: any, next: any) => {
   await initServices();
   const userId = req.headers['x-user-id'];
   if (userId) {
@@ -159,11 +159,29 @@ const requireAuth = async (req: any, res: any, next: any) => {
     }
   }
 
-  if (req.session?.user) {
-    return next();
+  if (!req.session?.user) {
+    req.session = req.session || {};
+    req.session.user = {
+      id: 'guest',
+      name: 'Vizitor',
+      email: 'guest@anglibot.ai',
+      picture: 'https://cdn-icons-png.flaticon.com/512/149/149071.png',
+      isAdmin: false,
+      points: 0,
+      streak: 0,
+      proficiency: 'Beginner'
+    };
   }
-  
-  res.status(401).json({ error: 'Unauthorized: No valid session or x-user-id header provided.' });
+  next();
+};
+
+const requireAuth = async (req: any, res: any, next: any) => {
+  await populateUser(req, res, () => {
+    if (req.session?.user && req.session.user.id !== 'guest') {
+      return next();
+    }
+    res.status(401).json({ error: 'Unauthorized: No valid session or x-user-id header provided.' });
+  });
 };
 
 app.use('/uploads', express.static(uploadsDir));
@@ -208,39 +226,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.get('/api/auth/me', async (req: any, res) => {
-  await initServices();
-  
-  const userId = req.headers['x-user-id'];
-  if (userId) {
-    const user = users.find(u => u.id === userId);
-    if (user) {
-      req.session = req.session || {};
-      req.session.user = user;
-      return res.json(user);
-    }
-  }
-
-  if (!req.session?.user) {
-    let user = users.find(u => u.email === 'admin@anglibot.ai');
-    if (!user) {
-      user = {
-        id: 'admin-id',
-        name: 'Administrator',
-        email: 'admin@anglibot.ai',
-        picture: 'https://cdn-icons-png.flaticon.com/512/149/149071.png',
-        isAdmin: true,
-        points: 1000,
-        streak: 1,
-        lastLogin: new Date().toISOString(),
-        badges: ['Admin'],
-        proficiency: 'Advanced',
-        goal: 'Manage Platform',
-      };
-      users.push(user);
-    }
-    req.session.user = user;
-  }
+app.get('/api/auth/me', populateUser, (req: any, res) => {
   res.json(req.session.user);
 });
 
@@ -367,68 +353,6 @@ app.get('/api/config/status', (req, res) => {
     APP_URL: !!process.env.APP_URL,
     CLOUDINARY: !!(process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME),
   });
-});
-
-app.post('/api/ai/chat', requireAuth, async (req, res) => {
-  const GEMINI_API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-  if (!GEMINI_API_KEY) return res.status(500).json({ error: 'AI is not configured. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY.' });
-  
-  let localAi;
-  try {
-    localAi = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-  } catch (e) {
-    return res.status(500).json({ error: 'Failed to initialize AI' });
-  }
-
-  const { message, proficiency, history } = req.body;
-  try {
-    const chat = localAi.chats.create({
-      model: 'gemini-2.5-flash-latest',
-      config: {
-        systemInstruction: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdoruesin të flasë Anglisht. Je miqësor, edukativ dhe kreativ në shembujt që jep.`,
-      },
-      history: history.map((msg: any) => ({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.text }]
-      })),
-    });
-    const result = await chat.sendMessage({ message });
-    res.json({ text: result.text });
-  } catch (error: any) {
-    console.error('AI Chat Error:', error);
-    if (error.message?.includes('API key not valid') || error.message?.includes('API_KEY_INVALID')) {
-      return res.status(401).json({ error: 'INVALID_API_KEY', details: error.message });
-    }
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/ai/generate', requireAuth, async (req, res) => {
-  const GEMINI_API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-  if (!GEMINI_API_KEY) return res.status(500).json({ error: 'AI is not configured. Please set GEMINI_API_KEY or VITE_GEMINI_API_KEY.' });
-  
-  let localAi;
-  try {
-    localAi = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-  } catch (e) {
-    return res.status(500).json({ error: 'Failed to initialize AI' });
-  }
-
-  const { prompt, config, model } = req.body;
-  try {
-    const result = await localAi.models.generateContent({
-      model: model || 'gemini-2.5-flash-latest',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config
-    });
-    res.json({ text: result.text });
-  } catch (error: any) {
-    console.error('AI Generate Error:', error);
-    if (error.message?.includes('API key not valid') || error.message?.includes('API_KEY_INVALID')) {
-      return res.status(401).json({ error: 'INVALID_API_KEY', details: error.message });
-    }
-    res.status(500).json({ error: error.message });
-  }
 });
 
 app.all('/api/*all', (req, res) => {

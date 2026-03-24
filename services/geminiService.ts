@@ -1,8 +1,16 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { Proficiency } from "../types";
 
 // Always initialize GoogleGenAI with a named parameter
+const getAI = () => {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('AI is not configured. Please set VITE_GEMINI_API_KEY.');
+  }
+  return new GoogleGenAI({ apiKey });
+};
+
 const CATEGORIES = [
   'Animals', 'Travel', 'Food', 'Technology', 'Nature', 'Business', 'Emotions', 
   'Daily Life', 'Science', 'Sports', 'Music', 'History', 'Space', 'Art', 'Clothing',
@@ -18,82 +26,64 @@ const recentWords: string[] = [];
 const recentPairs: string[] = [];
 const recentSentences: string[] = [];
 
-const callBackendAI = async (endpoint: string, body: any) => {
-  try {
-    const headers: any = { 'Content-Type': 'application/json' };
-    const storedUser = localStorage.getItem('anglibot_user');
-    if (storedUser) {
-      try {
-        const user = JSON.parse(storedUser);
-        headers['x-user-id'] = user.id;
-      } catch (e) {}
-    }
-
-    const response = await fetch(`/api/ai/${endpoint}`, {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      body: JSON.stringify(body),
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorData;
-      try { errorData = JSON.parse(errorText); } catch(e) { errorData = { error: errorText }; }
-      
-      if (response.status === 401 && errorData.error === 'INVALID_API_KEY') {
-        if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-          await window.aistudio.openSelectKey();
-          throw new Error('Ju lutem zgjidhni një API Key të vlefshme dhe provoni përsëri.');
-        }
-      }
-      
-      throw new Error(`HTTP ${response.status}: ${errorData.error || errorData.details || errorText}`);
-    }
-    return await response.json();
-  } catch (error: any) {
-    console.error(`AI Backend Call Error (${endpoint}):`, error);
-    throw error;
-  }
-};
-
 export const translateText = async (text: string, fromAlbanian: boolean) => {
   try {
+    const ai = getAI();
     const targetLang = fromAlbanian ? "English" : "Albanian";
     const sourceLang = fromAlbanian ? "Albanian" : "English";
     const prompt = `Translate the following ${sourceLang} word or sentence to ${targetLang}: "${text}". Only return the translation, no extra text. Ensure the translation is accurate and natural.`;
     
-    const result = await callBackendAI('generate', { prompt });
-    return result.text;
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
+    return response.text || "Gabim në përkthim.";
   } catch (error: any) {
+    console.error("Translation Error:", error);
     return `Gabim në përkthim: ${error.message}`;
   }
 };
 
 export const chatWithAI = async (message: string, proficiency: Proficiency = 'Beginner', history: {role: string, text: string}[] = []) => {
   try {
-    const result = await callBackendAI('chat', { message, proficiency, history });
-    return result.text;
+    const ai = getAI();
+    const chat = ai.chats.create({
+      model: "gemini-3-flash-preview",
+      config: {
+        systemInstruction: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdoruesin të flasë Anglisht. Je miqësor, edukativ dhe kreativ në shembujt që jep.`,
+      },
+      history: history.map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.text }]
+      })),
+    });
+
+    const response = await chat.sendMessage({ message });
+    return response.text || "Gabim në bisedë.";
   } catch (error: any) {
+    console.error("Chat Error:", error);
     return `Gabim: Shërbimi AI është momentalisht i padisponueshëm. (${error.message})`;
   }
 };
 
 export const processContent = async (content: string, task: string, isComplex: boolean = false) => {
   try {
+    const ai = getAI();
     const prompt = `Task: ${task}\n\nContent: ${content}\n\nProvide a high-quality response based on the task and content.`;
-    const result = await callBackendAI('generate', { 
-      prompt, 
-      model: 'gemini-2.5-flash-latest' 
+    const response = await ai.models.generateContent({
+      model: isComplex ? "gemini-3.1-pro-preview" : "gemini-3-flash-preview",
+      contents: prompt,
     });
-    return result.text;
+    return response.text || "Gabim gjatë procesimit.";
   } catch (error: any) {
+    console.error("Process Content Error:", error);
     return `Gabim gjatë procesimit me AI. (${error.message})`;
   }
 };
 
 export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'medium', exactLength?: number) => {
   try {
+    const ai = getAI();
     const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
     const lengthConstraint = exactLength ? `EXACTLY ${exactLength} characters long.` : `4-10 characters long.`;
     const avoidList = recentWords.length > 0 ? `CRITICAL: DO NOT use any of these words: ${recentWords.join(', ')}.` : '';
@@ -106,8 +96,9 @@ export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'med
       The word should be educational and commonly used in the specified category. 
       Do NOT pick very common starter words. Be creative and diverse.`;
 
-    const result = await callBackendAI('generate', {
-      prompt,
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
       config: {
         temperature: 1.5,
         responseMimeType: "application/json",
@@ -123,10 +114,10 @@ export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'med
 
     let word = "";
     try {
-      const parsed = JSON.parse(result.text || "{}");
+      const parsed = JSON.parse(response.text || "{}");
       word = parsed.word?.trim().toUpperCase().replace(/[^A-Z]/g, '') || "";
     } catch (e) {
-      word = result.text?.trim().toUpperCase().replace(/[^A-Z]/g, '') || "";
+      word = response.text?.trim().toUpperCase().replace(/[^A-Z]/g, '') || "";
     }
     
     if (!word) word = exactLength === 5 ? "STUDY" : "LEARN";
@@ -136,12 +127,14 @@ export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'med
     }
     return word;
   } catch (error) {
+    console.error("Generate Word Error:", error);
     return exactLength === 5 ? "STUDY" : "LEARN";
   }
 };
 
 export const generateWordPair = async () => {
   try {
+    const ai = getAI();
     const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
     const avoidList = recentPairs.length > 0 ? `CRITICAL: DO NOT use these English words: ${recentPairs.join(', ')}.` : '';
     
@@ -151,8 +144,9 @@ export const generateWordPair = async () => {
       Ensure the words are relevant to the category and useful for learners. 
       Return as JSON array: [{"en": "word", "sq": "fjala"}, ...]`;
 
-    const result = await callBackendAI('generate', {
-      prompt,
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
       config: {
         temperature: 1.5,
         responseMimeType: "application/json",
@@ -171,7 +165,7 @@ export const generateWordPair = async () => {
     });
     
     try {
-      const parsed = JSON.parse(result.text || "[]");
+      const parsed = JSON.parse(response.text || "[]");
       if (Array.isArray(parsed)) {
         parsed.forEach(p => { if (p.en) recentPairs.push(p.en); });
         if (recentPairs.length > 60) recentPairs.splice(0, recentPairs.length - 60);
@@ -181,12 +175,14 @@ export const generateWordPair = async () => {
       return [{ en: "Knowledge", sq: "Dituria" }, { en: "Challenge", sq: "Sfidë" }];
     }
   } catch (error) {
+    console.error("Generate Word Pair Error:", error);
     return [{ en: "Knowledge", sq: "Dituria" }, { en: "Challenge", sq: "Sfidë" }];
   }
 };
 
 export const generateSentence = async (level: Proficiency = 'Beginner') => {
   try {
+    const ai = getAI();
     const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
     const avoidList = recentSentences.length > 0 ? `CRITICAL: DO NOT use these exact sentences: ${recentSentences.join(' | ')}.` : '';
     
@@ -196,8 +192,9 @@ export const generateSentence = async (level: Proficiency = 'Beginner') => {
       The sentence should be grammatically correct and use vocabulary appropriate for the level. 
       Be creative and avoid clichés.`;
 
-    const result = await callBackendAI('generate', {
-      prompt,
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
       config: {
         temperature: 1.5,
         responseMimeType: "application/json",
@@ -213,10 +210,10 @@ export const generateSentence = async (level: Proficiency = 'Beginner') => {
     
     let sentence = "";
     try {
-      const parsed = JSON.parse(result.text || "{}");
+      const parsed = JSON.parse(response.text || "{}");
       sentence = parsed.sentence?.trim() || "";
     } catch (e) {
-      sentence = result.text?.trim() || "";
+      sentence = response.text?.trim() || "";
     }
     
     if (!sentence) sentence = "Learning a new language opens many doors.";
@@ -226,6 +223,7 @@ export const generateSentence = async (level: Proficiency = 'Beginner') => {
     }
     return sentence;
   } catch (error) {
+    console.error("Generate Sentence Error:", error);
     return "Learning a new language opens many doors.";
   }
 };
