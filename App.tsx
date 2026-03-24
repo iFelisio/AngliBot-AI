@@ -307,17 +307,50 @@ const App: React.FC = () => {
                       loginLogs={loginLogs} 
                       dialogues={dialogues} 
                       animations={animations} 
-                      onDialogueAdd={async d => { await safeFetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }); }} 
-                      onDialogueRemove={async id => { await safeFetch(`/api/dialogues/${id}`, { method: 'DELETE' }); }} 
-                      onClearDialogues={async () => { for (const d of dialogues) { await safeFetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); } }}
-                      onAnimationAdd={async a => { await safeFetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) }); }} 
-                      onAnimationRemove={async id => { await safeFetch(`/api/animations/${id}`, { method: 'DELETE' }); }} 
-                      onMakeAdmin={async id => { await safeFetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) }); }} 
-                      onRespondSuggestion={async (id, msg) => { await safeFetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) }); }} 
-                      onClearLogs={async () => { await safeFetch('/api/logs', { method: 'DELETE' }); }} 
-                      onDeleteUser={async id => { await safeFetch(`/api/users/${id}`, { method: 'DELETE' }); }} 
-                      onClearScoreboard={async () => { for (const u of allUsers) { if (u.points > 0) { await safeFetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } } }} 
-                      onResetUserScore={async id => { await safeFetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); }} 
+                      onDialogueAdd={async d => { 
+                        const res = await safeFetch('/api/dialogues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+                        if (res.ok) setDialogues(prev => [...prev, res.data]);
+                      }} 
+                      onDialogueRemove={async id => { 
+                        const res = await safeFetch(`/api/dialogues/${id}`, { method: 'DELETE' });
+                        if (res.ok) setDialogues(prev => prev.filter(d => d.id !== id));
+                      }} 
+                      onClearDialogues={async () => { 
+                        for (const d of dialogues) { await safeFetch(`/api/dialogues/${d.id}`, { method: 'DELETE' }); }
+                        setDialogues([]);
+                      }}
+                      onAnimationAdd={async a => { 
+                        const res = await safeFetch('/api/animations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) });
+                        if (res.ok) setAnimations(prev => [...prev, res.data]);
+                      }} 
+                      onAnimationRemove={async id => { 
+                        const res = await safeFetch(`/api/animations/${id}`, { method: 'DELETE' });
+                        if (res.ok) setAnimations(prev => prev.filter(a => a.id !== id));
+                      }} 
+                      onMakeAdmin={async id => { 
+                        const res = await safeFetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isAdmin: true }) });
+                        if (res.ok) setAllUsers(prev => prev.map(u => u.id === id ? { ...u, isAdmin: true } : u));
+                      }} 
+                      onRespondSuggestion={async (id, msg) => { 
+                        const res = await safeFetch(`/api/suggestions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminResponse: msg }) });
+                        if (res.ok) setSuggestions(prev => prev.map(s => s.id === id ? { ...s, adminResponse: msg } : s));
+                      }} 
+                      onClearLogs={async () => { 
+                        const res = await safeFetch('/api/logs', { method: 'DELETE' });
+                        if (res.ok) setLoginLogs([]);
+                      }} 
+                      onDeleteUser={async id => { 
+                        const res = await safeFetch(`/api/users/${id}`, { method: 'DELETE' });
+                        if (res.ok) setAllUsers(prev => prev.filter(u => u.id !== id));
+                      }} 
+                      onClearScoreboard={async () => { 
+                        for (const u of allUsers) { if (u.points > 0) { await safeFetch(`/api/users/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) }); } }
+                        setAllUsers(prev => prev.map(u => ({ ...u, points: 0 })));
+                      }} 
+                      onResetUserScore={async id => { 
+                        const res = await safeFetch(`/api/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points: 0 }) });
+                        if (res.ok) setAllUsers(prev => prev.map(u => u.id === id ? { ...u, points: 0 } : u));
+                      }} 
                       isDark={isDarkTheme} 
                     />
                   </AdminLoginWrapper>
@@ -548,78 +581,120 @@ const PerkthimView: React.FC<{ onTranslate: () => void; isDark: boolean }> = ({ 
 
 const DialoguesView: React.FC<{ dialogues: Dialogue[]; level: Proficiency; isDark: boolean }> = ({ dialogues, level, isDark }) => {
   const [selected, setSelected] = useState<Dialogue | null>(null);
-  const filtered = dialogues.filter(d => d.level === level);
+  const [filter, setFilter] = useState<Proficiency | 'All'>('All');
+  
+  const filtered = filter === 'All' ? dialogues : dialogues.filter(d => d.level === filter);
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
         <div>
-          <h1 className="text-3xl font-black tracking-tight">Dialogjet</h1>
-          <p className="text-zinc-500 font-medium">Praktikoni bisedat për nivelin {level}.</p>
+          <h1 className="text-4xl font-black tracking-tight mb-2">Dialogjet</h1>
+          <p className="text-zinc-500 font-medium">Eksploroni të gjitha bisedat tona edukative.</p>
         </div>
-        <div className={`px-4 py-2 rounded-xl text-xs font-bold ${isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>
-          {filtered.length} Dialogje
+        <div className="flex flex-wrap gap-2">
+          {(['All', 'Beginner', 'Intermediate', 'Advanced'] as const).map(l => (
+            <button 
+              key={l}
+              onClick={() => setFilter(l)}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${filter === l ? 'bg-black text-white shadow-lg' : isDark ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
+            >
+              {l === 'All' ? 'Të Gjitha' : l}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filtered.map(d => (
-          <button 
-            key={d.id} 
-            onClick={() => setSelected(d)}
-            className={`p-6 rounded-[28px] text-left border transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg hover:shadow-xl ${isDark ? 'bg-zinc-900 border-zinc-800 hover:bg-zinc-800' : 'bg-white border-white hover:border-zinc-100'}`}
-          >
-            <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-4">
-              <i className="fas fa-headphones text-xl"></i>
-            </div>
-            <h3 className="font-bold text-lg mb-1">{d.title}</h3>
-            <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">{d.level}</p>
-          </button>
-        ))}
-      </div>
+      {filtered.length === 0 ? (
+        <div className={`p-12 rounded-[40px] text-center border border-dashed ${isDark ? 'border-zinc-800 bg-zinc-900/30' : 'border-zinc-200 bg-zinc-50/50'}`}>
+          <i className="fas fa-book-open text-4xl text-zinc-300 mb-4"></i>
+          <p className="font-bold text-zinc-400">Nuk u gjet asnjë dialog për këtë kategori.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filtered.map(d => (
+            <button 
+              key={d.id} 
+              onClick={() => setSelected(d)}
+              className={`group p-8 rounded-[32px] text-left border transition-all hover:scale-[1.02] active:scale-[0.98] shadow-xl hover:shadow-2xl relative overflow-hidden ${isDark ? 'bg-zinc-900 border-zinc-800 hover:bg-zinc-800' : 'bg-white border-white hover:border-zinc-100'}`}
+            >
+              <div className={`absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 rounded-full opacity-10 transition-transform group-hover:scale-150 ${d.level === 'Beginner' ? 'bg-emerald-500' : d.level === 'Intermediate' ? 'bg-amber-500' : 'bg-rose-500'}`}></div>
+              
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-6 shadow-lg ${d.level === 'Beginner' ? 'bg-emerald-50 text-emerald-600' : d.level === 'Intermediate' ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600'}`}>
+                <i className="fas fa-headphones-alt text-2xl"></i>
+              </div>
+              
+              <h3 className="font-black text-xl mb-2 line-clamp-1">{d.title}</h3>
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${d.level === 'Beginner' ? 'bg-emerald-100 text-emerald-700' : d.level === 'Intermediate' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                  {d.level}
+                </span>
+                {(d.audioData || d.videoData) && (
+                  <span className="flex items-center gap-1 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+                    <i className="fab fa-google-drive"></i> Drive
+                  </span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
       {selected && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className={`w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[40px] shadow-2xl p-8 md:p-12 relative ${isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}`}>
-            <button onClick={() => setSelected(null)} className="absolute top-8 right-8 w-10 h-10 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-500 hover:bg-zinc-200 transition-colors">
-              <i className="fas fa-times"></i>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+          <div className={`w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-[40px] shadow-2xl p-8 md:p-16 relative ${isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}`}>
+            <button onClick={() => setSelected(null)} className="absolute top-8 right-8 w-12 h-12 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-all active:scale-90">
+              <i className="fas fa-times text-xl"></i>
             </button>
-            <h2 className="text-3xl font-black mb-2">{selected.title}</h2>
-            <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest mb-8">{selected.level}</p>
             
-            <div className={`p-8 rounded-3xl mb-8 font-medium leading-relaxed text-lg ${isDark ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
+            <div className="mb-10">
+              <span className={`inline-block px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest mb-4 ${selected.level === 'Beginner' ? 'bg-emerald-100 text-emerald-700' : selected.level === 'Intermediate' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                {selected.level}
+              </span>
+              <h2 className="text-4xl font-black tracking-tight leading-tight">{selected.title}</h2>
+            </div>
+            
+            <div className={`p-10 rounded-[32px] mb-12 font-medium leading-relaxed text-xl shadow-inner ${isDark ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
               <div className="whitespace-pre-wrap">{selected.content}</div>
             </div>
 
-            {selected.videoData && (
-              <div className="mb-8 p-8 rounded-3xl bg-indigo-50 dark:bg-zinc-800/50 border border-indigo-100 dark:border-zinc-700 text-center">
-                <i className="fas fa-film text-4xl text-indigo-500 mb-4"></i>
-                <h4 className="font-bold mb-4">Shiko Animacionin në Google Drive</h4>
-                <a 
-                  href={selected.videoData} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg"
-                >
-                  <i className="fab fa-google-drive"></i> Hap Animacionin
-                </a>
-              </div>
-            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              {selected.videoData && (
+                <div className={`p-8 rounded-[32px] border transition-all ${isDark ? 'bg-zinc-800/30 border-zinc-700' : 'bg-indigo-50/50 border-indigo-100'}`}>
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-500 text-white flex items-center justify-center mb-4 shadow-lg shadow-indigo-500/20">
+                    <i className="fas fa-film"></i>
+                  </div>
+                  <h4 className="font-black text-lg mb-2">Animacioni</h4>
+                  <p className="text-sm text-zinc-500 mb-6">Shiko videon edukative në Google Drive.</p>
+                  <a 
+                    href={selected.videoData} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 w-full py-4 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-600/20 active:scale-95"
+                  >
+                    <i className="fab fa-google-drive"></i> Hap në Drive
+                  </a>
+                </div>
+              )}
 
-            {selected.audioData && (
-              <div className="p-8 rounded-3xl bg-emerald-50 dark:bg-zinc-800/50 border border-emerald-100 dark:border-zinc-700 text-center">
-                <i className="fas fa-headphones text-4xl text-emerald-500 mb-4"></i>
-                <h4 className="font-bold mb-4">Dëgjo Audion në Google Drive</h4>
-                <a 
-                  href={selected.audioData} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg"
-                >
-                  <i className="fab fa-google-drive"></i> Hap Audion
-                </a>
-              </div>
-            )}
+              {selected.audioData && (
+                <div className={`p-8 rounded-[32px] border transition-all ${isDark ? 'bg-zinc-800/30 border-zinc-700' : 'bg-emerald-50/50 border-emerald-100'}`}>
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center mb-4 shadow-lg shadow-emerald-500/20">
+                    <i className="fas fa-headphones"></i>
+                  </div>
+                  <h4 className="font-black text-lg mb-2">Audio</h4>
+                  <p className="text-sm text-zinc-500 mb-6">Dëgjo shqiptimin në Google Drive.</p>
+                  <a 
+                    href={selected.audioData} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 w-full py-4 bg-emerald-600 text-white rounded-2xl font-black hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-600/20 active:scale-95"
+                  >
+                    <i className="fab fa-google-drive"></i> Hap në Drive
+                  </a>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -630,35 +705,53 @@ const DialoguesView: React.FC<{ dialogues: Dialogue[]; level: Proficiency; isDar
 const AnimationsView: React.FC<{ animations: AnimationMedia[]; isDark: boolean }> = ({ animations, isDark }) => {
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
         <div>
-          <h1 className="text-3xl font-black tracking-tight">Animacionet</h1>
-          <p className="text-zinc-500 font-medium">Shikoni animacionet tona edukative.</p>
+          <h1 className="text-4xl font-black tracking-tight mb-2">Animacionet</h1>
+          <p className="text-zinc-500 font-medium">Mësoni përmes videove tona interaktive.</p>
         </div>
-        <div className={`px-4 py-2 rounded-xl text-xs font-bold ${isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>
-          {animations.length} Animacione
+        <div className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest shadow-sm ${isDark ? 'bg-zinc-900 text-zinc-400 border border-zinc-800' : 'bg-white text-zinc-500 border border-zinc-100'}`}>
+          {animations.length} Video
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {animations.map(a => (
-          <a 
-            key={a.id} 
-            href={a.videoData}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`p-6 rounded-[28px] text-left border transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg hover:shadow-xl flex items-center gap-4 ${isDark ? 'bg-zinc-900 border-zinc-800 hover:bg-zinc-800' : 'bg-white border-white hover:border-zinc-100'}`}
-          >
-            <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600">
-              <i className="fas fa-film text-xl"></i>
-            </div>
-            <div>
-              <h3 className="font-bold text-lg">{a.title}</h3>
-              <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest">Hap në Google Drive</p>
-            </div>
-          </a>
-        ))}
-      </div>
+      {animations.length === 0 ? (
+        <div className={`p-12 rounded-[40px] text-center border border-dashed ${isDark ? 'border-zinc-800 bg-zinc-900/30' : 'border-zinc-200 bg-zinc-50/50'}`}>
+          <i className="fas fa-film text-4xl text-zinc-300 mb-4"></i>
+          <p className="font-bold text-zinc-400">Nuk u gjet asnjë animacion momentalisht.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {animations.map(a => (
+            <a 
+              key={a.id} 
+              href={a.videoData}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`group p-8 rounded-[32px] text-left border transition-all hover:scale-[1.02] active:scale-[0.98] shadow-xl hover:shadow-2xl flex flex-col gap-6 relative overflow-hidden ${isDark ? 'bg-zinc-900 border-zinc-800 hover:bg-zinc-800' : 'bg-white border-white hover:border-zinc-100'}`}
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 -mr-12 -mt-12 bg-indigo-500 rounded-full opacity-5 transition-transform group-hover:scale-150"></div>
+              
+              <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-lg group-hover:bg-indigo-600 group-hover:text-white transition-all duration-500">
+                <i className="fas fa-play text-2xl ml-1"></i>
+              </div>
+              
+              <div>
+                <h3 className="font-black text-xl mb-2 group-hover:text-indigo-600 transition-colors">{a.title}</h3>
+                <div className="flex items-center gap-2 text-[10px] font-black text-zinc-400 uppercase tracking-widest">
+                  <i className="fab fa-google-drive text-indigo-500"></i>
+                  Shiko në Google Drive
+                </div>
+              </div>
+              
+              <div className="mt-auto pt-4 border-t border-zinc-50 dark:border-zinc-800/50 flex items-center justify-between">
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Klikoni për ta hapur</span>
+                <i className="fas fa-external-link-alt text-xs text-zinc-300 group-hover:text-indigo-500 transition-colors"></i>
+              </div>
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
