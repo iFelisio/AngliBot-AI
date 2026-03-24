@@ -10,19 +10,6 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where, getDoc, setDoc, deleteField } from 'firebase/firestore';
-
-// Load Firebase config safely for ESM
-const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
-let firebaseConfig: any = {};
-try {
-  if (fs.existsSync(firebaseConfigPath)) {
-    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
-  }
-} catch (err) {
-  console.error('Failed to load firebase-applet-config.json:', err);
-}
 
 declare module 'express' {
   interface Request {
@@ -49,36 +36,12 @@ if (!fs.existsSync(uploadsDir)) {
   }
 }
 
-// Initialize Firebase SDK
-const finalFirebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY || firebaseConfig.apiKey,
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
-  projectId: process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId,
-  appId: process.env.FIREBASE_APP_ID || firebaseConfig.appId,
-  firestoreDatabaseId: process.env.FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfig.firestoreDatabaseId
-};
-
-const firebaseApp = initializeApp(finalFirebaseConfig);
-const db = getFirestore(firebaseApp, finalFirebaseConfig.firestoreDatabaseId);
-
-// Test Firestore connection
-async function testFirestore() {
-  try {
-    const { getDocFromServer } = await import('firebase/firestore');
-    await getDocFromServer(doc(db, 'config', 'connection_test'));
-    console.log('✅ Firestore connection verified.');
-  } catch (error: any) {
-    // We don't want to crash the server if the test fails
-    if (error.message?.includes('the client is offline')) {
-      console.error('❌ Firestore is offline. Check your Firebase configuration.');
-    } else {
-      console.log('ℹ️ Firestore connection test completed.');
-    }
-  }
-}
-
-// Run test but catch any top-level errors to prevent crash
-testFirestore().catch(err => console.error('Firestore test error:', err));
+// In-Memory Data Stores (Fallback since MongoDB is removed)
+let users: any[] = [];
+let dialogues: any[] = [];
+let animations: any[] = [];
+let suggestions: any[] = [];
+let logs: any[] = [];
 
 // Initialize AI lazily
 async function initServices() {
@@ -188,16 +151,11 @@ const populateUser = async (req: any, res: any, next: any) => {
   await initServices();
   const userId = req.headers['x-user-id'];
   if (userId) {
-    try {
-      const userDoc = await getDoc(doc(db, 'users', userId));
-      if (userDoc.exists()) {
-        const user = userDoc.data();
-        req.session = req.session || {};
-        req.session.user = { ...user, id: userDoc.id };
-        return next();
-      }
-    } catch (error) {
-      console.error('Error fetching user from Firestore:', error);
+    const user = users.find(u => u.id === userId);
+    if (user) {
+      req.session = req.session || {};
+      req.session.user = user;
+      return next();
     }
   }
 
@@ -233,44 +191,36 @@ app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
 
   if (username === 'admin' && password === '123admin') {
-    try {
-      const adminId = 'admin-id';
-      const adminDoc = await getDoc(doc(db, 'users', adminId));
-      let user;
+    let user = users.find(u => u.email === 'admin@anglibot.ai');
 
-      if (!adminDoc.exists()) {
-        user = {
-          id: adminId,
-          name: 'Administrator',
-          email: 'admin@anglibot.ai',
-          picture: 'https://cdn-icons-png.flaticon.com/512/149/149071.png',
-          isAdmin: true,
-          points: 1000,
-          streak: 1,
-          lastLogin: new Date().toISOString(),
-          badges: ['Admin'],
-          proficiency: 'Advanced',
-          goal: 'Manage Platform',
-        };
-        await setDoc(doc(db, 'users', adminId), user);
-      } else {
-        user = { ...adminDoc.data(), id: adminDoc.id };
-        user.lastLogin = new Date().toISOString();
-        await updateDoc(doc(db, 'users', adminId), { lastLogin: user.lastLogin });
-      }
-
-      await addDoc(collection(db, 'logs'), {
-        userId: user.id,
-        userName: user.name,
-        timestamp: new Date().toISOString()
-      });
-
-      req.session.user = user;
-      res.json(user);
-    } catch (error) {
-      console.error('Login error:', error);
-      res.status(500).json({ error: 'Internal Server Error' });
+    if (!user) {
+      user = {
+        id: 'admin-id',
+        name: 'Administrator',
+        email: 'admin@anglibot.ai',
+        picture: 'https://cdn-icons-png.flaticon.com/512/149/149071.png',
+        isAdmin: true,
+        points: 1000,
+        streak: 1,
+        lastLogin: new Date().toISOString(),
+        badges: ['Admin'],
+        proficiency: 'Advanced',
+        goal: 'Manage Platform',
+      };
+      users.push(user);
+    } else {
+      user.lastLogin = new Date().toISOString();
     }
+
+    logs.push({
+      id: uuidv4(),
+      userId: user.id,
+      userName: user.name,
+      timestamp: new Date().toISOString()
+    });
+
+    req.session.user = user;
+    res.json(user);
   } else {
     res.status(401).json({ error: 'Username ose fjalëkalim i gabuar' });
   }
@@ -305,161 +255,95 @@ app.post('/api/upload', (req, res, next) => {
 
 app.get('/api/users', requireAuth, async (req, res) => {
   await initServices();
-  try {
-    const usersSnapshot = await getDocs(collection(db, 'users'));
-    const usersList = usersSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-    res.json(usersList);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch users' });
-  }
+  res.json(users);
 });
 
 app.delete('/api/users/:id', requireAuth, async (req: any, res) => {
   await initServices();
   if (!req.session.user?.isAdmin) return res.status(403).json({ error: 'Forbidden' });
-  try {
-    await deleteDoc(doc(db, 'users', req.params.id));
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete user' });
-  }
+  users = users.filter(u => u.id !== req.params.id);
+  res.json({ success: true });
 });
 
 app.patch('/api/users/:id', requireAuth, async (req, res) => {
   await initServices();
-  try {
-    await updateDoc(doc(db, 'users', req.params.id), req.body);
-    const updatedDoc = await getDoc(doc(db, 'users', req.params.id));
-    res.json({ ...updatedDoc.data(), id: updatedDoc.id });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update user' });
+  const index = users.findIndex(u => u.id === req.params.id);
+  if (index !== -1) {
+    users[index] = { ...users[index], ...req.body };
+    res.json(users[index]);
+  } else {
+    res.status(404).json({ error: 'User not found' });
   }
 });
 
 app.get('/api/dialogues', async (req, res) => {
   await initServices();
-  try {
-    const dialoguesSnapshot = await getDocs(collection(db, 'dialogues'));
-    const dialoguesList = dialoguesSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-    res.json(dialoguesList);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch dialogues' });
-  }
+  res.json(dialogues);
 });
 
 app.post('/api/dialogues', requireAuth, async (req, res) => {
   await initServices();
-  try {
-    const { id, ...data } = req.body;
-    const newDialogue = { ...data, createdAt: new Date().toISOString() };
-    const docRef = await addDoc(collection(db, 'dialogues'), newDialogue);
-    res.json({ ...newDialogue, id: docRef.id });
-  } catch (error) {
-    console.error('Error adding dialogue:', error);
-    res.status(500).json({ error: 'Failed to add dialogue' });
-  }
+  const newDialogue = { ...req.body, id: uuidv4(), createdAt: new Date().toISOString() };
+  dialogues.push(newDialogue);
+  res.json(newDialogue);
 });
 
 app.delete('/api/dialogues/:id', requireAuth, async (req, res) => {
   await initServices();
-  try {
-    await deleteDoc(doc(db, 'dialogues', req.params.id));
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete dialogue' });
-  }
+  dialogues = dialogues.filter(d => d.id !== req.params.id);
+  res.json({ success: true });
 });
 
 app.get('/api/animations', async (req, res) => {
   await initServices();
-  try {
-    const animationsSnapshot = await getDocs(collection(db, 'animations'));
-    const animationsList = animationsSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-    res.json(animationsList);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch animations' });
-  }
+  res.json(animations);
 });
 
 app.post('/api/animations', requireAuth, async (req, res) => {
   await initServices();
-  try {
-    const { id, ...data } = req.body;
-    const newAnim = { ...data, createdAt: new Date().toISOString() };
-    const docRef = await addDoc(collection(db, 'animations'), newAnim);
-    res.json({ ...newAnim, id: docRef.id });
-  } catch (error) {
-    console.error('Error adding animation:', error);
-    res.status(500).json({ error: 'Failed to add animation' });
-  }
+  const newAnim = { ...req.body, id: uuidv4(), createdAt: new Date().toISOString() };
+  animations.push(newAnim);
+  res.json(newAnim);
 });
 
 app.delete('/api/animations/:id', requireAuth, async (req, res) => {
   await initServices();
-  try {
-    await deleteDoc(doc(db, 'animations', req.params.id));
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete animation' });
-  }
+  animations = animations.filter(a => a.id !== req.params.id);
+  res.json({ success: true });
 });
 
 app.get('/api/suggestions', async (req, res) => {
   await initServices();
-  try {
-    const suggestionsSnapshot = await getDocs(collection(db, 'suggestions'));
-    const suggestionsList = suggestionsSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-    res.json(suggestionsList);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch suggestions' });
-  }
+  res.json(suggestions);
 });
 
 app.post('/api/suggestions', requireAuth, async (req, res) => {
   await initServices();
-  try {
-    const { id, ...data } = req.body;
-    const newSuggestion = { ...data, date: new Date().toLocaleDateString() };
-    const docRef = await addDoc(collection(db, 'suggestions'), newSuggestion);
-    res.json({ ...newSuggestion, id: docRef.id });
-  } catch (error) {
-    console.error('Error adding suggestion:', error);
-    res.status(500).json({ error: 'Failed to add suggestion' });
-  }
+  const newSuggestion = { ...req.body, id: uuidv4(), date: new Date().toLocaleDateString() };
+  suggestions.push(newSuggestion);
+  res.json(newSuggestion);
 });
 
 app.patch('/api/suggestions/:id', requireAuth, async (req, res) => {
   await initServices();
-  try {
-    await updateDoc(doc(db, 'suggestions', req.params.id), req.body);
-    const updatedDoc = await getDoc(doc(db, 'suggestions', req.params.id));
-    res.json({ ...updatedDoc.data(), id: updatedDoc.id });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update suggestion' });
+  const index = suggestions.findIndex(s => s.id === req.params.id);
+  if (index !== -1) {
+    suggestions[index] = { ...suggestions[index], ...req.body };
+    res.json(suggestions[index]);
+  } else {
+    res.status(404).json({ error: 'Suggestion not found' });
   }
 });
 
 app.get('/api/logs', requireAuth, async (req, res) => {
   await initServices();
-  try {
-    const logsSnapshot = await getDocs(collection(db, 'logs'));
-    const logsList = logsSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-    res.json(logsList);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch logs' });
-  }
+  res.json(logs);
 });
 
 app.delete('/api/logs', requireAuth, async (req, res) => {
   await initServices();
-  try {
-    const logsSnapshot = await getDocs(collection(db, 'logs'));
-    const deletePromises = logsSnapshot.docs.map(doc => deleteDoc(doc.ref));
-    await Promise.all(deletePromises);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to clear logs' });
-  }
+  logs = [];
+  res.json({ success: true });
 });
 
 app.get('/api/config/status', (req, res) => {
