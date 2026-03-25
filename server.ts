@@ -9,7 +9,6 @@ import cookieSession from 'cookie-session';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
 
 declare module 'express' {
   interface Request {
@@ -175,63 +174,16 @@ async function initServices() {
   }
 }
 
-// Cloudinary configuration
-let cloudinary: any = null;
-try {
-  // Validate CLOUDINARY_URL before importing to prevent protocol errors
-  if (process.env.CLOUDINARY_URL && !process.env.CLOUDINARY_URL.startsWith('cloudinary://')) {
-    console.warn("⚠️ Paralajmërim: CLOUDINARY_URL është e pasaktë. Duhet të fillojë me 'cloudinary://'. Fotot do të ruhen lokalisht.");
-  } else {
-    // We use dynamic import to avoid top-level crash if CLOUDINARY_URL is invalid
-    const cloudinaryModule = await import('cloudinary');
-    cloudinary = cloudinaryModule.v2;
-    if (process.env.CLOUDINARY_CLOUD_NAME) {
-      cloudinary.config({
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET,
-      });
-    }
-  }
-} catch (e) {
-  console.error("Failed to initialize Cloudinary:", e);
-}
-
 // Multer setup
-let storage;
-try {
-  if (cloudinary && (process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME)) {
-    storage = new CloudinaryStorage({
-      cloudinary: cloudinary,
-      params: {
-        folder: 'anglibot',
-        resource_type: 'auto'
-      } as any,
-    });
-  } else {
-    storage = multer.diskStorage({
-      destination: (req, file, cb) => {
-        cb(null, uploadsDir);
-      },
-      filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname);
-        cb(null, `${uuidv4()}${ext}`);
-      },
-    });
-  }
-} catch (err) {
-  console.error("Failed to configure Cloudinary storage:", err);
-  // Fallback to disk storage if Cloudinary fails
-  storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, uploadsDir);
-    },
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname);
-      cb(null, `${uuidv4()}${ext}`);
-    },
-  });
-}
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${uuidv4()}${ext}`);
+  },
+});
 const upload = multer({ storage });
 const APP_URL = process.env.APP_URL || `http://localhost:3000`;
 
@@ -363,12 +315,8 @@ app.post('/api/upload', (req, res, next) => {
 }, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded. Make sure the field name is "file".' });
   
-  if (cloudinary && (process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME)) {
-    res.json({ url: req.file.path });
-  } else {
-    const url = `${APP_URL}/uploads/${req.file.filename}`;
-    res.json({ url });
-  }
+  const url = `${APP_URL}/uploads/${req.file.filename}`;
+  res.json({ url });
 });
 
 app.get('/api/users', requireAuth, async (req, res) => {
@@ -469,7 +417,6 @@ app.get('/api/config/status', (req, res) => {
     SESSION_SECRET: !!process.env.SESSION_SECRET,
     GEMINI_API_KEY: !!(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY),
     APP_URL: !!process.env.APP_URL,
-    CLOUDINARY: !!(process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME),
   });
 });
 
