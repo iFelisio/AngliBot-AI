@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeColor, User, Dialogue, Suggestion, Proficiency, Goal, LoginEvent, AnimationMedia } from './types';
-import { translateText, chatWithAI, processContent } from './services/geminiService';
+import { translateText, chatWithAI, processContent } from './services/openaiService';
 import { Wordle, Hangman, SentenceBuilder, WordScramble, MemoryMatch } from './components/Games';
 
 // Custom Logo Component
@@ -144,7 +144,7 @@ const App: React.FC = () => {
 
   const isDarkTheme = theme === 'dark' || (theme === 'default' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-  const isConfigured = configStatus && configStatus.GEMINI_API_KEY;
+  const isConfigured = configStatus && configStatus.OPENAI_API_KEY;
 
   if (globalError) {
     return (
@@ -463,7 +463,7 @@ const LoginView: React.FC<{ onLogin: (u: string, p: string) => Promise<{ok: bool
 
 const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ configStatus, isDark }) => {
   const missingKeys = Object.entries(configStatus)
-    .filter(([key, value]) => !value && ['GEMINI_API_KEY', 'SESSION_SECRET'].includes(key))
+    .filter(([key, value]) => !value && ['OPENAI_API_KEY', 'SESSION_SECRET'].includes(key))
     .map(([key]) => key);
 
   if (missingKeys.length === 0) return null;
@@ -492,7 +492,7 @@ const SetupRequiredView: React.FC<{ configStatus: any; isDark: boolean }> = ({ c
                   <code className="text-sm font-bold">{key}</code>
                   <p className="text-[10px] uppercase tracking-widest opacity-60 mt-0.5">
                     {key === 'SESSION_SECRET' && 'Një tekst i rastësishëm për sigurinë'}
-                    {key === 'GEMINI_API_KEY' && 'Çelësi i AI nga Google AI Studio'}
+                    {key === 'OPENAI_API_KEY' && 'Çelësi i AI nga OpenAI Dashboard'}
                   </p>
                 </div>
               </div>
