@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { generateWord, generateSentence, generateWordPair } from '../services/openaiService';
+import { generateWord, generateSentence, generateWordPair } from '../services/geminiService';
 import { Proficiency } from '../types';
 
 interface GameProps {

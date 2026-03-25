@@ -34,15 +34,12 @@ export const translateText = async (text: string, fromAlbanian: boolean) => {
     const prompt = `Translate the following ${sourceLang} word or sentence to ${targetLang}: "${text}". Only return the translation, no extra text. Ensure the translation is accurate and natural.`;
     
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview",
+      model: "gemini-3-flash-preview",
       contents: prompt,
     });
     return response.text || "Gabim në përkthim.";
   } catch (error: any) {
     console.error("Translation Error:", error);
-    if (error.message?.includes("429") || error.message?.includes("quota")) {
-      return "Keni tejkaluar limitin ditor të përkthimeve falas. Ju lutem provoni përsëri pas pak ose nesër.";
-    }
     return `Gabim në përkthim: ${error.message}`;
   }
 };
@@ -51,7 +48,7 @@ export const chatWithAI = async (message: string, proficiency: Proficiency = 'Be
   try {
     const ai = getAI();
     const chat = ai.chats.create({
-      model: "gemini-3.1-flash-lite-preview",
+      model: "gemini-3-flash-preview",
       config: {
         systemInstruction: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdoruesin të flasë Anglisht. Je miqësor, edukativ dhe kreativ në shembujt që jep.`,
       },
@@ -65,9 +62,6 @@ export const chatWithAI = async (message: string, proficiency: Proficiency = 'Be
     return response.text || "Gabim në bisedë.";
   } catch (error: any) {
     console.error("Chat Error:", error);
-    if (error.message?.includes("429") || error.message?.includes("quota")) {
-      return "Keni tejkaluar limitin e bisedave falas. Ju lutem provoni përsëri pas pak ose nesër.";
-    }
     return `Gabim: Shërbimi AI është momentalisht i padisponueshëm. (${error.message})`;
   }
 };
@@ -77,15 +71,12 @@ export const processContent = async (content: string, task: string, isComplex: b
     const ai = getAI();
     const prompt = `Task: ${task}\n\nContent: ${content}\n\nProvide a high-quality response based on the task and content.`;
     const response = await ai.models.generateContent({
-      model: isComplex ? "gemini-3.1-pro-preview" : "gemini-3.1-flash-lite-preview",
+      model: isComplex ? "gemini-3.1-pro-preview" : "gemini-3-flash-preview",
       contents: prompt,
     });
     return response.text || "Gabim gjatë procesimit.";
   } catch (error: any) {
     console.error("Process Content Error:", error);
-    if (error.message?.includes("429") || error.message?.includes("quota")) {
-      return "Limiti i përdorimit falas është arritur. Ju lutem provoni përsëri më vonë.";
-    }
     return `Gabim gjatë procesimit me AI. (${error.message})`;
   }
 };
@@ -106,7 +97,7 @@ export const generateWord = async (difficulty: 'easy' | 'medium' | 'hard' = 'med
       Do NOT pick very common starter words. Be creative and diverse.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview",
+      model: "gemini-3-flash-preview",
       contents: prompt,
       config: {
         temperature: 1.5,
@@ -154,7 +145,7 @@ export const generateWordPair = async () => {
       Return as JSON array: [{"en": "word", "sq": "fjala"}, ...]`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview",
+      model: "gemini-3-flash-preview",
       contents: prompt,
       config: {
         temperature: 1.5,
@@ -202,7 +193,7 @@ export const generateSentence = async (level: Proficiency = 'Beginner') => {
       Be creative and avoid clichés.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview",
+      model: "gemini-3-flash-preview",
       contents: prompt,
       config: {
         temperature: 1.5,

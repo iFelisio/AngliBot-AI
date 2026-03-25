@@ -8,7 +8,7 @@ import cookieParser from 'cookie-parser';
 import cookieSession from 'cookie-session';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 
 declare module 'express' {
@@ -45,15 +45,15 @@ let logs: any[] = [];
 
 // Initialize AI lazily
 async function initServices() {
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY;
-  if (OPENAI_API_KEY) {
+  const GEMINI_API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  if (GEMINI_API_KEY) {
     try {
-      ai = new OpenAI({ apiKey: OPENAI_API_KEY });
+      ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
     } catch (e) {
       console.error("Failed to initialize AI:", e);
     }
   } else {
-    console.warn("OPENAI_API_KEY is missing. AI features will be disabled.");
+    console.warn("API_KEY or GEMINI_API_KEY is missing. AI features will be disabled.");
   }
 }
 
@@ -349,164 +349,10 @@ app.delete('/api/logs', requireAuth, async (req, res) => {
 app.get('/api/config/status', (req, res) => {
   res.json({
     SESSION_SECRET: !!process.env.SESSION_SECRET,
-    OPENAI_API_KEY: !!(process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY),
+    GEMINI_API_KEY: !!(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY),
     APP_URL: !!process.env.APP_URL,
     CLOUDINARY: !!(process.env.CLOUDINARY_URL || process.env.CLOUDINARY_CLOUD_NAME),
   });
-});
-
-// AI Proxy Routes
-app.post('/api/ai/translate', async (req, res) => {
-  try {
-    await initServices();
-    if (!ai) return res.status(503).json({ error: 'AI service not configured' });
-    
-    const { text, fromAlbanian } = req.body;
-    const targetLang = fromAlbanian ? "English" : "Albanian";
-    const sourceLang = fromAlbanian ? "Albanian" : "English";
-    
-    const response = await ai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: `You are a translator. Translate the following ${sourceLang} word or sentence to ${targetLang}. Only return the translation, no extra text.` },
-        { role: "user", content: text }
-      ],
-    });
-    res.json({ translation: response.choices[0].message.content || "Gabim në përkthim." });
-  } catch (error: any) {
-    console.error("Server Translation Error:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/ai/chat', async (req, res) => {
-  try {
-    await initServices();
-    if (!ai) return res.status(503).json({ error: 'AI service not configured' });
-    
-    const { message, proficiency, history } = req.body;
-    const response = await ai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { 
-          role: "system", 
-          content: `Ti je një mësues ndihmës i gjuhës Angleze për studentët Shqiptarë. Niveli i studentit është: ${proficiency}. Përshtat gjuhën dhe kompleksitetin tënd sipas këtij niveli. Përgjigju në Shqip kur shpjegon rregulla, por inkurajo përdoruesin të flasë Anglisht. Je miqësor, edukativ dhe kreativ në shembujt që jep.` 
-        },
-        ...history.map((msg: any) => ({
-          role: msg.role === 'user' ? 'user' : 'assistant',
-          content: msg.text
-        })),
-        { role: "user", content: message }
-      ],
-    });
-    res.json({ response: response.choices[0].message.content || "Gabim në bisedë." });
-  } catch (error: any) {
-    console.error("Server Chat Error:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-const CATEGORIES = [
-  'Animals', 'Travel', 'Food', 'Technology', 'Nature', 'Business', 'Emotions', 
-  'Daily Life', 'Science', 'Sports', 'Music', 'History', 'Space', 'Art', 'Clothing',
-  'Health', 'Education', 'Weather', 'Hobbies', 'Transportation', 'Architecture',
-  'Literature', 'Movies', 'Geography', 'Politics', 'Economy', 'Social Media',
-  'Environment', 'Fashion', 'Cooking', 'Photography', 'Philosophy', 'Psychology',
-  'Gardening', 'DIY', 'Fitness', 'Yoga', 'Meditation', 'Mindfulness', 'Self-Care',
-  'Productivity', 'Time Management', 'Leadership', 'Entrepreneurship', 'Marketing',
-  'Design', 'Programming', 'Data Science', 'AI', 'Robotics', 'Cybersecurity'
-];
-
-app.post('/api/ai/generate-word', async (req, res) => {
-  try {
-    await initServices();
-    if (!ai) return res.status(503).json({ error: 'AI service not configured' });
-    
-    const { difficulty, exactLength, recentWords = [] } = req.body;
-    const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
-    const lengthConstraint = exactLength ? `EXACTLY ${exactLength} characters long.` : `4-10 characters long.`;
-    const avoidList = recentWords.length > 0 ? `CRITICAL: DO NOT use any of these words: ${recentWords.join(', ')}.` : '';
-
-    const prompt = `Generate one UNIQUE, interesting English word for a learning game. 
-      Category: ${category}. 
-      Difficulty Level: ${difficulty}. 
-      Word length: ${lengthConstraint}
-      ${avoidList}
-      The word should be educational and commonly used in the specified category. 
-      Do NOT pick very common starter words. Be creative and diverse.
-      Return ONLY a JSON object: {"word": "THEWORD"}`;
-
-    const response = await ai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" }
-    });
-
-    const parsed = JSON.parse(response.choices[0].message.content || "{}");
-    res.json(parsed);
-  } catch (error: any) {
-    console.error("Server Generate Word Error:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/ai/generate-word-pair', async (req, res) => {
-  try {
-    await initServices();
-    if (!ai) return res.status(503).json({ error: 'AI service not configured' });
-    
-    const { recentPairs = [] } = req.body;
-    const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
-    const avoidList = recentPairs.length > 0 ? `CRITICAL: DO NOT use these English words: ${recentPairs.join(', ')}.` : '';
-    
-    const prompt = `Generate 4 UNIQUE and diverse pairs of English words and their Albanian translations. 
-      Category: ${category}. 
-      ${avoidList}
-      Ensure the words are relevant to the category and useful for learners. 
-      Return ONLY a JSON array of objects: [{"en": "word", "sq": "fjala"}, ...]`;
-
-    const response = await ai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" }
-    });
-    
-    const parsed = JSON.parse(response.choices[0].message.content || "{}");
-    res.json(parsed);
-  } catch (error: any) {
-    console.error("Server Generate Word Pair Error:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/ai/generate-sentence', async (req, res) => {
-  try {
-    await initServices();
-    if (!ai) return res.status(503).json({ error: 'AI service not configured' });
-    
-    const { level, recentSentences = [] } = req.body;
-    const category = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
-    const avoidList = recentSentences.length > 0 ? `CRITICAL: DO NOT use these exact sentences: ${recentSentences.join(' | ')}.` : '';
-    
-    const prompt = `Generate one UNIQUE, natural English sentence for a ${level} level student. 
-      Category: ${category}.
-      ${avoidList}
-      The sentence should be grammatically correct and use vocabulary appropriate for the level. 
-      Be creative and avoid clichés.
-      Return ONLY a JSON object: {"sentence": "The generated sentence"}`;
-
-    const response = await ai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" }
-    });
-    
-    const parsed = JSON.parse(response.choices[0].message.content || "{}");
-    res.json(parsed);
-  } catch (error: any) {
-    console.error("Server Generate Sentence Error:", error);
-    res.status(500).json({ error: error.message });
-  }
 });
 
 app.all('/api/*all', (req, res) => {
