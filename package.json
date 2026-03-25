@@ -11,7 +11,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^1.41.0",
+    "@google/genai": "^1.46.0",
     "cloudinary": "^1.41.3",
     "cookie-parser": "^1.4.7",
     "cookie-session": "^2.1.1",
